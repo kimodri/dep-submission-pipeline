@@ -1,6 +1,6 @@
-import re
+import re, json
 import pandas as pd
-from etl import OWNER_TYPE
+from pipeline.config import OWNER_TYPE
 from datetime import datetime
 from collections import defaultdict
 
@@ -13,7 +13,7 @@ def _get_df(data, status):
     df = _add_status_to_df(status, df)
     return df
 
-def transform_raw_to_bronze(self, data: dict, extracted_at: datetime = None):
+def transform_raw_to_bronze(data: dict, extracted_at: datetime = None):
 
     if extracted_at is None:
         extracted_at = datetime.utcnow()
@@ -95,3 +95,10 @@ def transform_raw_to_bronze(self, data: dict, extracted_at: datetime = None):
 
     return bronze_table
 
+
+if __name__ == "__main__":
+    with open("../data/raw/v2-response.json", "r") as f:
+        raw_data = json.load(f)
+    bronze_table = transform_raw_to_bronze(raw_data)
+    bronze_table.to_csv("../data/bronze/bronze_table.csv", index=False)
+    print(bronze_table.head())
