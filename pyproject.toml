@@ -8,6 +8,7 @@ dependencies = [
     "duckdb>=1.5.5",
     "pandas>=3.0.5",
     "python-dotenv>=1.2.2",
+    "pytz>=2026.3.post1",
     "requests>=2.34.2",
 ]
 
@@ -25,4 +26,5 @@ build-backend = "hatchling.build"
 packages = ["src/pipeline"]
 
 [project.scripts]
-dep-pipeline = "pipeline.__main__:main"
+dep-pipeline-prod = "pipeline.__main__:main"
+dep-pipeline-dev = "pipeline.__main__:dev"

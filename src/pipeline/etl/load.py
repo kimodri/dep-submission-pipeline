@@ -1,13 +1,26 @@
-import duckdb
+import pandas as pd
 
-def _create_schemas(conn):
-    conn.execute("CREATE SCHEMA IF NOT EXISTS bronze;")
-    conn.execute("CREATE SCHEMA IF NOT EXISTS silver;")
-    conn.execute("CREATE SCHEMA IF NOT EXISTS gold;")
-    
+def load_to_bronze(conn, bronze_df: pd.DataFrame):
+    conn.execute(
+        """
+        CREATE SCHEMA IF NOT EXISTS bronze;
 
-def _create_table(conn):
-    pass
+        CREATE TABLE IF NOT EXISTS bronze.raw_issue_extractions (
+            run_id VARCHAR PRIMARY KEY,
+            extracted_at TIMESTAMPTZ NOT NULL,
+            payload JSON NOT NULL
+        );
+        """
+    )
 
-def load_to_bronze(conn):
-    pass
+    conn.register("incoming_bronze_df", bronze_df)
+
+    try:
+        conn.execute(
+            """
+            INSERT INTO bronze.raw_issue_extractions BY NAME
+            SELECT * FROM incoming_bronze_df
+            """
+        )
+    finally:
+        conn.unregister("incoming_bronze_df")

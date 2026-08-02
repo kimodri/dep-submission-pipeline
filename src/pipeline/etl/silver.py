@@ -1,29 +1,43 @@
+import re, json
 import pandas as pd
+from datetime import datetime
 
-DATE_COLUMNS = ["created_at", "updated_at", "extracted_at"]
+DATE_COLS = [
+    "extracted_at",
+    "created_at",
+    "updated_at"
+]
 
-DIMENSION_CONFIG = {
-    "issue": {
-        "natural_key": "issue_id",
-        "surrogate_key": "issue_key",
-        "attributes": ["title", "url", "author"],
-    },
-    "reviewer": {
-        "natural_key": "assignees",
-        "surrogate_key": "reviewer_key",
-    },
-    "state": {"natural_key": "state", "surrogate_key": "state_key"},
-    "status": {"natural_key": "status", "surrogate_key": "status_key"},
-    "milestone": {
-        "natural_key": "milestone",
-        "surrogate_key": "milestone_key",
-    },
-}
+def _get_reviewers(reviewer_list: list[dict]) -> list[str]:
+    if not reviewer_list:
+        return []
+    return [reviewer.get("login") for reviewer in reviewer_list if reviewer]
 
-def _standardize_date_cols(
-    table: pd.DataFrame, 
-    date_cols: list[str]
-)-> pd.DataFrame:
+def _get_milestone(title: str, labels: list[dict]) -> str | None:
+    milestone = None
+    if labels:
+        for label in labels:
+            if label.get("name", "").startswith("M") and label.get("name", "")[1:].isdigit():
+                milestone = label.get("name")
+                break
+
+    if milestone is None and title:
+        match = re.search(r"\[(M\d+)\]", title)
+        if match:
+            milestone = match.group(1)
+
+    return milestone
+
+def _get_status(field_values: list[dict]) -> str:
+    for field in field_values:
+        if not field:
+            continue
+        if field.get("field", {}).get("name") == "Status":
+            status = field.get("name")
+            break
+    return status
+
+def _standardize_date_cols(table: pd.DataFrame, date_cols: list[str])-> pd.DataFrame:
     for date_col in date_cols:
         table[date_col] = (
             pd.to_datetime(table[date_col], utc=True)
@@ -32,132 +46,66 @@ def _standardize_date_cols(
         )
     return table
 
-def _create_dim(
-    df: pd.DataFrame,
-    natural_key: str,
-    surrogate_key: str,
-    attributes: list[str] | None = None,
-) -> pd.DataFrame:
-    columns = [natural_key, *(attributes or [])]
-    dim_df = (
-        df.loc[df[natural_key].notna(), columns]
-        .drop_duplicates(subset=[natural_key])
-        .sort_values(natural_key, kind="stable")
-        .reset_index(drop=True)
+
+def transform_bronze_to_silver(run_id: str, extracted_at: datetime, data: pd.DataFrame) -> pd.DataFrame:
+
+    list_of_contents = data["data"].get("data").get("organization").get("projectV2").get("items").get("nodes")
+     
+    silver_df = pd.json_normalize(list_of_contents, sep="_")
+    silver_df.rename(
+        columns={
+            "content_id": "issue_id",
+            "content_title": "issue_title",
+            "content_url": "issue_url",
+            "content_author_login": "issue_author",
+            "content_createdAt": "created_at",
+            "content_updatedAt": "updated_at",
+            "content_state": "state",
+            "content_assignees_nodes": "reviewer",
+            "content_labels_nodes": "milestone",
+            "fieldValues_nodes": "status"
+        },
+        inplace=True
     )
-    dim_df.insert(0, surrogate_key, range(1, len(dim_df) + 1))
-    return dim_df
-
-def _create_dim_date(df: pd.DataFrame, date_cols: list[str]) -> pd.DataFrame:
-    dim_date = (
-        pd.concat(
-            [df[col] for col in date_cols], ignore_index=True
-        )
-        .dropna()
-        .dt.date
-        .drop_duplicates()
-        .sort_values()
-        .reset_index(drop=True)
-        .to_frame(name="date")
-    )
-    dim_date["date_key"] = dim_date.index + 1
-    return dim_date
-
-def _filter_date_dim(df: pd.DataFrame) -> pd.DataFrame:
-    df["year"] = df["date"].year
-    df["month"] = df["date"].month
-    df["month_name"] = df["date"].month_name()
-    df["day"] = df["date"].day
-    df["day_name"] = df["date"].day_name()
-
-    return df
-
-def _merge_date_keys_to_fact(
-    fact_df: pd.DataFrame, 
-    dim_date_df: pd.DataFrame, 
-    date_cols: list[str]
-) -> pd.DataFrame:
-    if not dim_date_df["date"].is_unique:
-        raise ValueError("dim_date must contain one row per date")
-
-    fact_df = fact_df.copy()
-    date_key_lookup = dim_date_df.set_index("date")["date_key"]
-
-    for col in date_cols:
-        fact_df[f"{col}_key"] = (
-            fact_df[col]
-            .dt.date
-            .map(date_key_lookup)
-            .astype("Int64")
-        )
-    return fact_df
-
-def transform_bronze_to_silver(df: pd.DataFrame) -> dict[str, dict[str, pd.DataFrame]]:
-    silver_table = df.copy()
-    silver_table = _standardize_date_cols(silver_table, DATE_COLUMNS)
-    silver_table_exploded = silver_table.explode("assignees")\
-    .drop(columns=["labels"])
-
-    # Feature engineer measure columns
-    silver_table_exploded["is_assigned"] = (
-        silver_table_exploded["assignees"].notna().astype("int8")
-    )
-    silver_table_exploded["days_since_update"] = (
-        silver_table_exploded["updated_at"] - silver_table_exploded["created_at"]
-    ).dt.days
-
-    silver_table_exploded["submission_age_days"] = (
-        silver_table_exploded["extracted_at"] - silver_table_exploded["created_at"]
-    ).dt.days
-
-    # Create dimensions
-    dimensions = {
-        name: _create_dim(silver_table_exploded, **config)
-        for name, config in DIMENSION_CONFIG.items()
-    }
-
-    issue_attributes = DIMENSION_CONFIG["issue"]["attributes"]
-    fact_submission_snapshot = silver_table_exploded.drop(
-        columns=issue_attributes
-    ).copy()
-
-    for name, config in DIMENSION_CONFIG.items():
-        natural_key = config["natural_key"]
-        surrogate_key = config["surrogate_key"]
-        key_mapping = dimensions[name][[surrogate_key, natural_key]]
-
-        fact_submission_snapshot = (
-            fact_submission_snapshot.merge(
-                key_mapping,
-                on=natural_key,
-                how="left",
-                sort=False,
-                validate="many_to_one",
-            )
-            .drop(columns=natural_key)
-        )
-        fact_submission_snapshot[surrogate_key] = (
-            fact_submission_snapshot[surrogate_key].astype("Int64")
-        )
-
-        # Create date dimension
-        dim_date = _create_dim_date(fact_submission_snapshot, DATE_COLUMNS)
     
-        fact_submission_snapshot = _merge_date_keys_to_fact(
-            fact_submission_snapshot, dim_date, DATE_COLUMNS
-        )
-        
-        dimensions["dim_date"] = _filter_date_dim(dim_date)
-        
-        tables = {}
-        
-        tables["dimensions"] = dimensions
-        tables["fact_submission_snapshot"] = fact_submission_snapshot
+    silver_df["extracted_at"] = extracted_at
+    
+    silver_df["reviewer"] = silver_df["reviewer"].apply(_get_reviewers)
+    silver_df["milestone"] = silver_df.apply(lambda row: _get_milestone(row["issue_title"], row["milestone"]), axis=1)
+    silver_df["status"] = silver_df["status"].apply(_get_status)
 
-    return tables
-
+    silver_df = _standardize_date_cols(silver_df, DATE_COLS)
+    
+    # Feature engineer measure columns
+    silver_df["is_assigned"] = (silver_df["reviewer"].notna().astype("int8"))
+    silver_df["days_since_update"] = (silver_df["updated_at"] - silver_df["created_at"]).dt.days
+    silver_df["submission_age_days"] = (silver_df["extracted_at"] - silver_df["created_at"]).dt.days
+    
+    return silver_df[silver_df["issue_title"].str.match(r"\[M\d+\]")]
+    
 if __name__ == "__main__":
-    # Example usage
-    bronze_table = pd.read_csv("../data/bronze/bronze_table.csv")
-    silver_tables = transform_bronze_to_silver(bronze_table)
-    print(silver_tables.keys())
+    from pipeline import init_config
+    from datetime import datetime, timezone
+    from pipeline.etl import transform_raw_to_bronze
+    from pipeline.etl.extract import Extraction
+    
+    config = init_config()
+    
+    with open(config.sample_data_path, "r") as fp:
+            data = json.load(fp)
+            
+    extraction = Extraction(
+        run_id="example_run_id",
+        extracted_at=datetime.now(timezone.utc),
+        payload=data
+    )
+    
+    bronze_df = transform_raw_to_bronze(extraction)
+
+    silver_df = transform_bronze_to_silver(
+        run_id=extraction.run_id,
+        extracted_at=extraction.extracted_at,
+        data=bronze_df
+    )
+    
+    print(silver_df.head())
