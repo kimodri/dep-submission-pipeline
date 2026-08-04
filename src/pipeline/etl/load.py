@@ -20,6 +20,7 @@ def load_to_bronze(conn, bronze_df: pd.DataFrame):
             """
             INSERT INTO bronze.raw_issue_extractions BY NAME
             SELECT * FROM incoming_bronze_df
+            ON CONFLICT (run_id) DO NOTHING;
             """
         )
     finally:

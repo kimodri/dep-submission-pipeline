@@ -2,14 +2,15 @@ import json
 import pandas as pd
 from pipeline.etl.extract import Extraction
 
+
 def transform_raw_to_bronze(extraction: Extraction) -> pd.DataFrame:
     payload = extraction.payload
     df = pd.DataFrame(
-        {
+        [{
             "run_id": extraction.run_id,
             "payload": payload,
             "extracted_at": extraction.extracted_at
-        }
+        }]
     )
     
     return df

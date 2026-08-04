@@ -97,3 +97,14 @@ def extract_bronze_submission(conn, run_id) -> pd.DataFrame:
     [run_id]
   ).df()
   
+  return bronze_df
+  
+def _extract_all(conn):
+  return (
+    conn.execute(
+      """
+      SELECT *
+      FROM bronze.raw_issue_extractions;
+      """
+    ).df()
+  )

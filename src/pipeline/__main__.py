@@ -29,15 +29,16 @@ def main():
     # Load
     with get_database_connection() as conn:
         load_to_bronze(conn, bronze_df)
-        bronze_df = extract_bronze_submission(conn)
-        print(bronze_df)
+        bronze_df = extract_bronze_submission(conn, run_id)
+        
+        # Proceed with silver
         
 def dev():
     import json
     import pandas as pd
     from datetime import datetime, timezone
     from pipeline import get_dev_database_connection
-    from pipeline.etl.extract import Extraction 
+    from pipeline.etl.extract import Extraction, extract_bronze_submission, _extract_all
     
     config = init_config()
     run_id = str(uuid4())
@@ -46,7 +47,7 @@ def dev():
             data = json.load(fp)
             
     extraction = Extraction(
-        run_id="example_run_id",
+        run_id=run_id,
         extracted_at=pd.Timestamp.now(timezone.utc),
         payload=json.dumps(data)
     )
@@ -56,6 +57,12 @@ def dev():
     
     # Load
     with get_dev_database_connection() as conn:
-        load_to_bronze(conn, bronze_df)
-        bronze_df = extract_bronze_submission(conn)
+        conn.execute("BEGIN")
+        try:
+            load_to_bronze(conn, bronze_df)
+            bronze_df = extract_bronze_submission(conn, run_id)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLL BACK")
         print(bronze_df)
+        print(_extract_all(conn))
