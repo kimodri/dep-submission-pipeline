@@ -219,3 +219,7 @@ __marimo__/
 
 # data 
 data/
+*.duckdb
+
+# Local lesson authoring instructions
+learnings/LESSON_WRITING_GUIDE.md
