@@ -1,31 +1,40 @@
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 from dataclasses import dataclass
 
-@dataclass(frozen=True)
-class Config:
-    token: str
-    owner_name: str
-    owner_type: str
-    project_number: int
-    database_path: Path
-    duckdb_path: str
-    sample_data_path: str
-    
+from dotenv import load_dotenv
 
-def init_config()-> Config:
+from pipeline.models import Config 
+
+def _required_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise ValueError(f"Missing required environment variable: {name}")
+    return value
+
+def init_config() -> Config:
     load_dotenv()
-    token = os.getenv("TOKEN")
-    owner_name = os.getenv("OWNER_NAME")
-    owner_type = os.getenv("OWNER_TYPE")
-    project_number = int(os.getenv("PROJECT_NUMBER"))
-    
+
+    token = _required_env("TOKEN")
+    owner_name = _required_env("OWNER_NAME")
+    owner_type = _required_env("OWNER_TYPE")
+    project_number = int(_required_env("PROJECT_NUMBER"))
+
     project_root = Path(__file__).resolve().parents[2]
     database_path = project_root / "data" / "warehouse.duckdb"
-    duckdb_path = os.getenv("DUCKDB_PATH", str(database_path)),
-    sample_data_path = os.getenv("SAMPLE_DATA_PATH", str(project_root / "data" / "raw" / "v2-response.json"))
+    duckdb_path = os.getenv("DUCKDB_PATH", str(database_path))
+    motherduckdb_path = _required_env("MOTHERDUCKDB_PATH")
+    sample_data_path = os.getenv(
+        "SAMPLE_DATA_PATH",
+        str(project_root / "data" / "raw" / "v2-response.json"),  # This path maybe nonexistent
+    )
+
+    if not motherduckdb_path.startswith("md:"):
+        raise ValueError("MOTHERDUCKDB_PATH must start with 'md:'")
+    _required_env("MOTHERDUCK_TOKEN")
     
+    max_error_mesage = 2000
+
     return Config(
         token=token,
         owner_name=owner_name,
@@ -33,5 +42,7 @@ def init_config()-> Config:
         project_number=project_number,
         database_path=database_path,
         duckdb_path=duckdb_path,
-        sample_data_path=sample_data_path
+        motherduckdb_path=motherduckdb_path,
+        sample_data_path=sample_data_path,
+        max_error_mesage=max_error_mesage
     )
