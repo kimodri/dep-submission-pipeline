@@ -24,6 +24,7 @@ class Config:
     duckdb_path: str
     motherduckdb_path: str
     sample_data_path: str
+    max_error_message: int
 
 @dataclass(frozen=True)
 class PipelineAttempt:

@@ -204,6 +204,6 @@ def extract_submissions(
     return Extraction(
         run_id=run_id,
         attempt_number=attempt_number,
-        extracted_at=datetime.now(timezone.utc).isoformat,
+        extracted_at=datetime.now(timezone.utc).isoformat(),
         payload={"pages": pages},
     )

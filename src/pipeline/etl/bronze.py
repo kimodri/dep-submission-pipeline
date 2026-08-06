@@ -30,8 +30,8 @@ def run_bronze(
         run_id=metadata.run_id,
         attempt_number=metadata.attempt_number,
         started_at=started_at,
-        completed_at=datetime.now(timezone.utc).isoformat,
+        completed_at=datetime.now(timezone.utc).isoformat(),
         attempt_status=AttemptStatus.SUCCEEDED,
     )
     
-    return (extraction, succeeded_attempt)
+    return (succeeded_attempt, extraction)
