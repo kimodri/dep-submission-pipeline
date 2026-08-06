@@ -1,0 +1,38 @@
+name: Bronze ingestion
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 00:17, 03:17, ..., 21:17 Asia/Manila (UTC+8)
+    - cron: "17 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  load-bronze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      TOKEN: ${{ secrets.DEP_GITHUB_TOKEN }}
+      MOTHERDUCK_TOKEN: ${{ secrets.MOTHERDUCK_TOKEN }}
+      OWNER_NAME: ${{ vars.OWNER_NAME }}
+      OWNER_TYPE: ${{ vars.OWNER_TYPE }}
+      PROJECT_NUMBER: ${{ vars.PROJECT_NUMBER }}
+      MOTHERDUCKDB_PATH: ${{ vars.MOTHERDUCKDB_PATH }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install uv and Python
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          python-version-file: ".python-version"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Extract and load Bronze  # in the meantime
+        run: uv run dep-pipeline-bronze

@@ -1,33 +1,37 @@
-import json
-import pandas as pd
+import duckdb
+import logging
+from datetime import datetime, timezone
+
 from pipeline.etl.extract import Extraction
+from pipeline.etl.load import attempt_exists
+from pipeline.models import (
+    RunMetadata, 
+    PipelineAttempt, 
+    AttemptStatus    
+)
 
+def run_bronze(
+    conn: duckdb.DuckDBPyConnection,
+    metadata: RunMetadata,
+    extraction: Extraction,
+    logger: logging,
+    started_at: datetime
+) -> tuple:
+    
+    if attempt_exists(conn, metadata.run_id, metadata.attempt_number):
+        logger.info(
+            "Bronze attempt %s/%s already has a final outcome; skipping",
+            metadata.run_id,
+            metadata.attempt_number,
+        )
+        return None
 
-def transform_raw_to_bronze(extraction: Extraction) -> pd.DataFrame:
-    payload = extraction.payload
-    df = pd.DataFrame(
-        [{
-            "run_id": extraction.run_id,
-            "payload": payload,
-            "extracted_at": extraction.extracted_at
-        }]
+    succeeded_attempt = PipelineAttempt(
+        run_id=metadata.run_id,
+        attempt_number=metadata.attempt_number,
+        started_at=started_at,
+        completed_at=datetime.now(timezone.utc).isoformat,
+        attempt_status=AttemptStatus.SUCCEEDED,
     )
     
-    return df
-
-
-if __name__ == "__main__":
-    from pipeline import init_config
-    
-    config = init_config()
-    
-    with open(config.sample_data_path, "r") as fp:
-        data = json.load(fp)
-    extraction = Extraction(
-        run_id="example_run_id",
-        extracted_at=pd.Timestamp.now(),
-        payload=data
-    )
-    bronze_df = transform_raw_to_bronze(extraction)
-    print(bronze_df)
-    print(bronze_df.dtypes)
+    return (extraction, succeeded_attempt)
