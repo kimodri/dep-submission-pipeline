@@ -20,19 +20,3 @@ source payloads:
 
 GitHub Actions supplies `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` automatically.
 Local runs use a generated `local-<uuid>` run ID and attempt number `1`.
-
-Configure these GitHub repository secrets:
-
-- `DEP_GITHUB_TOKEN`
-- `MOTHERDUCK_TOKEN`
-
-Configure these GitHub repository variables:
-
-- `OWNER_NAME`
-- `OWNER_TYPE`
-- `PROJECT_NUMBER`
-- `MOTHERDUCKDB_PATH` (for example, `md:dep_submission_db`)
-
-Run **Bronze ingestion** manually once from the repository's Actions tab before
-relying on its schedule. The workflow then runs every three hours at minute 17,
-using the Manila cycle `00:17, 03:17, ..., 21:17`.
