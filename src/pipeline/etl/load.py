@@ -1,22 +1,23 @@
-import json, duckdb, os
+import json, duckdb
 from datetime import datetime, timezone
 
-from pipeline import init_config
 from pipeline.models import (
     AttemptStatus, 
     Extraction, 
     PipelineAttempt,
-    Config,
     RunMetadata
 ) 
 
-def _safe_error_message(error: Exception, secrets: list[str | None]) -> str:
-    config = init_config()
+def _safe_error_message(
+    error: Exception,
+    secrets: list[str | None],
+    max_length: int,
+) -> str:
     message = str(error)
     for secret in secrets:
         if secret:
             message = message.replace(secret, "[REDACTED]")
-    return message[:config.max_error_message]
+    return message[:max_length]
 
 def create_pipeline_tables(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(
@@ -122,11 +123,12 @@ def load_failed_attempt(
 
 def record_failure_safely(
     conn: duckdb.DuckDBPyConnection,
-    config: Config,
     metadata: RunMetadata,
     started_at: datetime,
     stage: str,
     error: Exception,
+    secrets: list[str | None],
+    max_error_message: int,
     logger
 ) -> None:
     try:
@@ -142,7 +144,8 @@ def record_failure_safely(
                 error_type=type(error).__name__,
                 error_message=_safe_error_message(
                     error,
-                    [config.token, os.getenv("MOTHERDUCK_TOKEN")],
+                    secrets,
+                    max_error_message,
                 ),
             ),
         )

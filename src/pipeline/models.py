@@ -15,16 +15,23 @@ class RunMetadata:
     attempt_number: int
 
 @dataclass(frozen=True)
-class Config:
+class SourceConfig:
     token: str
     owner_name: str
     owner_type: str
     project_number: int
-    database_path: Path
-    duckdb_path: str
-    motherduckdb_path: str
-    sample_data_path: str
-    max_error_message: int
+
+
+@dataclass(frozen=True)
+class LocalConfig:
+    duckdb_path: Path
+    sample_data_path: Path
+
+
+@dataclass(frozen=True)
+class MotherDuckConfig:
+    database_path: str
+    token: str
 
 @dataclass(frozen=True)
 class PipelineAttempt:

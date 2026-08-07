@@ -1,5 +1,6 @@
 import unittest
 from unittest.mock import Mock, patch
+from datetime import datetime
 
 import requests
 
@@ -47,6 +48,8 @@ class ExtractSubmissionsTests(unittest.TestCase):
 
         self.assertEqual(extraction.payload, {"pages": [first_page, second_page]})
         self.assertEqual(extraction.attempt_number, 1)
+        self.assertIsInstance(extraction.extracted_at, datetime)
+        self.assertIsNotNone(extraction.extracted_at.utcoffset())
         self.assertEqual(post.call_count, 2)
         self.assertIsNone(post.call_args_list[0].kwargs["json"]["variables"]["cursor"])
         self.assertEqual(

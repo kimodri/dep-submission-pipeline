@@ -35,4 +35,4 @@ jobs:
         run: uv sync --locked
 
       - name: Extract and load Bronze  # in the meantime
-        run: uv run dep-pipeline-bronze
+        run: uv run dep-pipeline-prod

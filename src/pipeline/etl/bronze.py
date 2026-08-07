@@ -10,28 +10,35 @@ from pipeline.models import (
     AttemptStatus    
 )
 
-def run_bronze(
+
+def should_run_bronze(
     conn: duckdb.DuckDBPyConnection,
     metadata: RunMetadata,
-    extraction: Extraction,
-    logger: logging,
-    started_at: datetime
-) -> tuple:
-    
+    logger: logging.Logger,
+) -> bool:
     if attempt_exists(conn, metadata.run_id, metadata.attempt_number):
         logger.info(
             "Bronze attempt %s/%s already has a final outcome; skipping",
             metadata.run_id,
             metadata.attempt_number,
         )
-        return None
+        return False
+
+    return True
+
+
+def run_bronze(
+    metadata: RunMetadata,
+    extraction: Extraction,
+    started_at: datetime,
+) -> tuple[PipelineAttempt, Extraction]:
 
     succeeded_attempt = PipelineAttempt(
         run_id=metadata.run_id,
         attempt_number=metadata.attempt_number,
         started_at=started_at,
-        completed_at=datetime.now(timezone.utc).isoformat(),
+        completed_at=datetime.now(timezone.utc),
         attempt_status=AttemptStatus.SUCCEEDED,
     )
-    
-    return (succeeded_attempt, extraction)
+
+    return succeeded_attempt, extraction

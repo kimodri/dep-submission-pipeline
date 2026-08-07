@@ -84,12 +84,12 @@ def transform_bronze_to_silver(run_id: str, extracted_at: datetime, data: pd.Dat
     return silver_df[silver_df["issue_title"].str.match(r"\[M\d+\]")]
     
 if __name__ == "__main__":
-    from pipeline import init_config
+    from pipeline import init_local_config
     from datetime import datetime, timezone
     from pipeline.etl import transform_raw_to_bronze
     from pipeline.etl.extract import Extraction
     
-    config = init_config()
+    config = init_local_config()
     
     with open(config.sample_data_path, "r") as fp:
             data = json.load(fp)
