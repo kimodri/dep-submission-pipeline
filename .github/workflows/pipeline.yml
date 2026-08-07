@@ -3,8 +3,8 @@ name: Bronze ingestion
 on:
   workflow_dispatch:
   schedule:
-    # 00:17, 03:17, ..., 21:17 Asia/Manila (UTC+8)
-    - cron: "17 * * * *"
+    # 00:17, 06:17, ..., 24:17 Asia/Manila (UTC+8)
+    - cron: "17 4-22/6 * * *"
 
 permissions:
   contents: read
