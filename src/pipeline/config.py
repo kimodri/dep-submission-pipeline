@@ -44,5 +44,5 @@ def init_config() -> Config:
         duckdb_path=duckdb_path,
         motherduckdb_path=motherduckdb_path,
         sample_data_path=sample_data_path,
-        max_error_mesage=max_error_mesage
+        max_error_message=max_error_mesage
     )
