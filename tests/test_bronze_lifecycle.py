@@ -283,9 +283,7 @@ class BronzeComponentTests(unittest.TestCase):
                 extracted_at,
                 is_assigned,
                 days_since_update,
-                submission_age_days,
-                current_milestone,
-                builder_status
+                submission_age_days
             )
             VALUES (
                 'already-loaded',
@@ -302,9 +300,7 @@ class BronzeComponentTests(unittest.TestCase):
                 now(),
                 false,
                 0,
-                0,
-                'M2',
-                'active'
+                0
             )
             """
         )

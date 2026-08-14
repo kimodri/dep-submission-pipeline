@@ -1,7 +1,6 @@
 import re
-import numpy as np
 import pandas as pd
-from datetime import date, datetime
+from datetime import datetime
 
 from pipeline.models import Extraction
 
@@ -18,16 +17,6 @@ NAMES_TO_DROP = [
     "cancinoray", 
     "CardinalSeen"
 ]
-
-MILESTONE_DEADLINES = {
-    0: date(2026, 6, 28),
-    1: date(2026, 7, 19),
-    2: date(2026, 8, 2),
-    3: date(2026, 9, 13),
-    4: date(2026, 10, 11),
-    5: date(2026, 11, 8),
-    6: date(2026, 12, 6),
-}
 
 def _get_reviewers(reviewer_list: list[dict]) -> list[str]:
     if not reviewer_list:
@@ -66,49 +55,6 @@ def _standardize_date_cols(table: pd.DataFrame, date_cols: list[str])-> pd.DataF
             .dt.tz_convert("Asia/Manila")
             .dt.floor("s")
         )
-    return table
-
-def _add_builder_status(
-    table: pd.DataFrame,
-    extracted_at: datetime,
-) -> pd.DataFrame:
-    table = table.copy()
-    table["builder_status"] = pd.Series(pd.NA, index=table.index, dtype="string")
-
-    as_of_date = pd.to_datetime(extracted_at, utc=True).tz_convert(
-        "Asia/Manila"
-    ).date()
-    required_milestone = max(
-        (
-            milestone_num
-            for milestone_num, deadline in MILESTONE_DEADLINES.items()
-            if deadline < as_of_date
-        ),
-        default=None,
-    )
-
-    has_builder = table["issue_author"].notna()
-    if required_milestone is None:
-        table.loc[has_builder, "builder_status"] = "active"
-        return table
-
-    milestone_num = pd.to_numeric(
-        table["milestone"].str.extract(r"(\d+)")[0],
-        errors="coerce",
-    )
-    has_passed = table["status"].astype("string").str.casefold().eq("passed")
-    highest_passed = (
-        table.loc[has_builder & has_passed, ["issue_author"]]
-        .assign(milestone_num=milestone_num[has_builder & has_passed])
-        .groupby("issue_author")["milestone_num"]
-        .max()
-    )
-    builder_progress = table.loc[has_builder, "issue_author"].map(highest_passed)
-    table.loc[has_builder, "builder_status"] = np.where(
-        builder_progress.ge(required_milestone).fillna(False),
-        "active",
-        "delayed",
-    )
     return table
 
 def _transform_page_to_silver(
@@ -158,17 +104,12 @@ def _transform_page_to_silver(
     silver_df = _standardize_date_cols(silver_df, DATE_COLS)
     
     # Feature engineer measure columns
-    silver_df["is_assigned"] = (silver_df["reviewer"].notna().astype("int8"))
-    silver_df["days_since_update"] = (silver_df["updated_at"] - silver_df["created_at"]).dt.days
+    silver_df["is_assigned"] = silver_df["reviewer"].str.len().gt(0)
+    # GitHub's updated_at represents any issue update; it does not identify
+    # whether the latest activity came from a builder or a reviewer.
+    silver_df["days_since_update"] = (silver_df["extracted_at"] - silver_df["updated_at"]).dt.days
     silver_df["submission_age_days"] = (silver_df["extracted_at"] - silver_df["created_at"]).dt.days
     
-    milestone_num = silver_df["milestone"].str.extract(r"(\d+)")[0].astype(int)
-
-    silver_df["current_milestone"] = np.where(
-        silver_df["status"].str.lower().eq("passed"),
-        "M" + (milestone_num + 1).clip(upper=6).astype(str),
-        silver_df["milestone"]
-    )
     return silver_df
 
 
@@ -198,7 +139,7 @@ def transform_bronze_to_silver(
         )
         .reset_index(drop=True)
     )
-    return _add_builder_status(silver_df, extracted_at)
+    return silver_df
 
 
 def transform_extraction_to_silver(extraction: Extraction) -> pd.DataFrame:

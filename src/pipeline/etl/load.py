@@ -26,8 +26,6 @@ _SILVER_COLUMNS = frozenset(
         "is_assigned",
         "days_since_update",
         "submission_age_days",
-        "current_milestone",
-        "builder_status",
     }
 )
 
@@ -100,11 +98,6 @@ def create_pipeline_tables(conn: duckdb.DuckDBPyConnection) -> None:
             is_assigned BOOLEAN NOT NULL,
             days_since_update BIGINT NOT NULL,
             submission_age_days BIGINT NOT NULL,
-            current_milestone VARCHAR NOT NULL,
-            builder_status VARCHAR CHECK (
-                builder_status IS NULL
-                OR builder_status IN ('active', 'delayed')
-            ),
             PRIMARY KEY (run_id, issue_id)
         );
         """

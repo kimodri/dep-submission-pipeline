@@ -93,6 +93,8 @@ def _merge_date_keys_to_fact(
     return fact_df
 
 def transform_silver_to_gold(df: pd.DataFrame) -> dict[str, dict[str, pd.DataFrame]]:
+    # TODO: Derive current_milestone and schedule_status in a Gold builder
+    # snapshot table, where one row represents one builder per extraction.
     gold_table = df.copy()
     gold_table = _standardize_date_cols(gold_table, DATE_COLUMNS)
     gold_table_exploded = gold_table.explode("assignees")\
@@ -143,5 +145,4 @@ def transform_silver_to_gold(df: pd.DataFrame) -> dict[str, dict[str, pd.DataFra
         tables["fact_submission_snapshot"] = fact_submission_snapshot
 
     return tables
-
 
