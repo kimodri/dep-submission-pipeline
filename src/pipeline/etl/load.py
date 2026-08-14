@@ -1,4 +1,5 @@
 import json, duckdb
+import pandas as pd
 from datetime import datetime, timezone
 
 from pipeline.models import (
@@ -7,6 +8,28 @@ from pipeline.models import (
     PipelineAttempt,
     RunMetadata
 ) 
+
+_SILVER_COLUMNS = frozenset(
+    {
+        "issue_id",
+        "issue_title",
+        "issue_url",
+        "issue_author",
+        "created_at",
+        "updated_at",
+        "state",
+        "reviewer",
+        "milestone",
+        "status",
+        "run_id",
+        "extracted_at",
+        "is_assigned",
+        "days_since_update",
+        "submission_age_days",
+        "current_milestone",
+        "builder_status",
+    }
+)
 
 def _safe_error_message(
     error: Exception,
@@ -24,6 +47,7 @@ def create_pipeline_tables(conn: duckdb.DuckDBPyConnection) -> None:
         """
         CREATE SCHEMA IF NOT EXISTS ops;
         CREATE SCHEMA IF NOT EXISTS bronze;
+        CREATE SCHEMA IF NOT EXISTS silver;
 
         CREATE TABLE IF NOT EXISTS ops.pipeline_attempts (
             run_id VARCHAR NOT NULL,
@@ -58,6 +82,30 @@ def create_pipeline_tables(conn: duckdb.DuckDBPyConnection) -> None:
             extracted_at TIMESTAMPTZ NOT NULL,
             payload JSON NOT NULL,
             PRIMARY KEY (run_id, attempt_number)
+        );
+
+        CREATE TABLE IF NOT EXISTS silver.issue_submissions (
+            run_id VARCHAR NOT NULL,
+            issue_id VARCHAR NOT NULL,
+            issue_title VARCHAR NOT NULL,
+            issue_url VARCHAR NOT NULL,
+            issue_author VARCHAR,
+            created_at TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL,
+            state VARCHAR NOT NULL,
+            reviewer VARCHAR[] NOT NULL,
+            milestone VARCHAR NOT NULL,
+            status VARCHAR,
+            extracted_at TIMESTAMPTZ NOT NULL,
+            is_assigned BOOLEAN NOT NULL,
+            days_since_update BIGINT NOT NULL,
+            submission_age_days BIGINT NOT NULL,
+            current_milestone VARCHAR NOT NULL,
+            builder_status VARCHAR CHECK (
+                builder_status IS NULL
+                OR builder_status IN ('active', 'delayed')
+            ),
+            PRIMARY KEY (run_id, issue_id)
         );
         """
     )
@@ -222,6 +270,43 @@ def load_successful_extraction_to_bronze(
         raise
 
 # For Silver
+def load_silver(
+    conn: duckdb.DuckDBPyConnection,
+    df: pd.DataFrame,
+) -> None:
+    columns = list(df.columns)
+    actual_columns = set(columns)
+    missing_columns = sorted(_SILVER_COLUMNS - actual_columns)
+    unexpected_columns = sorted(actual_columns - _SILVER_COLUMNS)
+    duplicate_columns = sorted(
+        column for column in actual_columns if columns.count(column) > 1
+    )
+
+    if missing_columns or unexpected_columns or duplicate_columns:
+        problems = []
+        if missing_columns:
+            problems.append(f"missing columns: {missing_columns}")
+        if unexpected_columns:
+            problems.append(f"unexpected columns: {unexpected_columns}")
+        if duplicate_columns:
+            problems.append(f"duplicate columns: {duplicate_columns}")
+        raise ValueError(
+            "Silver DataFrame does not match issue_submissions schema ("
+            + "; ".join(problems)
+            + ")"
+        )
+
+    conn.register("incoming_silver", df)
+    try:
+        conn.execute(
+            """
+            INSERT INTO silver.issue_submissions BY NAME
+            SELECT * FROM incoming_silver
+            """
+        )
+    finally:
+        conn.unregister("incoming_silver")
+
 def extract_canonical_bronze(conn: duckdb.DuckDBPyConnection):
     """Return the future Silver input: latest succeeded attempt per run."""
     return conn.execute(
@@ -238,6 +323,56 @@ def extract_canonical_bronze(conn: duckdb.DuckDBPyConnection):
         ORDER BY b.run_id
         """
     ).df()
+
+def extract_pending_canonical_bronze(
+    conn: duckdb.DuckDBPyConnection,
+) -> list[Extraction]:
+    rows = conn.execute(
+        """
+        WITH canonical_bronze AS (
+            SELECT b.*
+            FROM bronze.raw_issue_extractions AS b
+            JOIN ops.pipeline_attempts AS a
+              USING (run_id, attempt_number)
+            WHERE a.attempt_status = 'succeeded'
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY b.run_id
+                ORDER BY b.attempt_number DESC
+            ) = 1
+        )
+        SELECT
+            c.run_id,
+            c.attempt_number,
+            c.extracted_at,
+            c.payload
+        FROM canonical_bronze AS c
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM silver.issue_submissions AS s
+            WHERE s.run_id = c.run_id
+        )
+        ORDER BY c.run_id
+        """
+    ).fetchall()
+
+    pending_extractions = []
+    for run_id, attempt_number, extracted_at, payload in rows:
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if not isinstance(payload, dict):
+            raise TypeError(
+                f"Bronze payload for run_id={run_id} must decode to a dictionary"
+            )
+        pending_extractions.append(
+            Extraction(
+                run_id=run_id,
+                attempt_number=attempt_number,
+                extracted_at=extracted_at,
+                payload=payload,
+            )
+        )
+
+    return pending_extractions
 
 def extract_bronze_submission(
     conn: duckdb.DuckDBPyConnection,

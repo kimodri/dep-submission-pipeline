@@ -1,12 +1,33 @@
-import re, json
+import re
+import numpy as np
 import pandas as pd
-from datetime import datetime
+from datetime import date, datetime
+
+from pipeline.models import Extraction
 
 DATE_COLS = [
     "extracted_at",
     "created_at",
     "updated_at"
 ]
+
+NAMES_TO_DROP = [
+    "smmariquit", 
+    "gkate78", 
+    "Zeraphim", 
+    "cancinoray", 
+    "CardinalSeen"
+]
+
+MILESTONE_DEADLINES = {
+    0: date(2026, 6, 28),
+    1: date(2026, 7, 19),
+    2: date(2026, 8, 2),
+    3: date(2026, 9, 13),
+    4: date(2026, 10, 11),
+    5: date(2026, 11, 8),
+    6: date(2026, 12, 6),
+}
 
 def _get_reviewers(reviewer_list: list[dict]) -> list[str]:
     if not reviewer_list:
@@ -28,7 +49,8 @@ def _get_milestone(title: str, labels: list[dict]) -> str | None:
 
     return milestone
 
-def _get_status(field_values: list[dict]) -> str:
+def _get_status(field_values: list[dict]) -> str | None:
+    status = None
     for field in field_values:
         if not field:
             continue
@@ -46,10 +68,62 @@ def _standardize_date_cols(table: pd.DataFrame, date_cols: list[str])-> pd.DataF
         )
     return table
 
+def _add_builder_status(
+    table: pd.DataFrame,
+    extracted_at: datetime,
+) -> pd.DataFrame:
+    table = table.copy()
+    table["builder_status"] = pd.Series(pd.NA, index=table.index, dtype="string")
 
-def transform_bronze_to_silver(run_id: str, extracted_at: datetime, data: pd.DataFrame) -> pd.DataFrame:
+    as_of_date = pd.to_datetime(extracted_at, utc=True).tz_convert(
+        "Asia/Manila"
+    ).date()
+    required_milestone = max(
+        (
+            milestone_num
+            for milestone_num, deadline in MILESTONE_DEADLINES.items()
+            if deadline < as_of_date
+        ),
+        default=None,
+    )
 
-    list_of_contents = data["data"].get("data").get("organization").get("projectV2").get("items").get("nodes")
+    has_builder = table["issue_author"].notna()
+    if required_milestone is None:
+        table.loc[has_builder, "builder_status"] = "active"
+        return table
+
+    milestone_num = pd.to_numeric(
+        table["milestone"].str.extract(r"(\d+)")[0],
+        errors="coerce",
+    )
+    has_passed = table["status"].astype("string").str.casefold().eq("passed")
+    highest_passed = (
+        table.loc[has_builder & has_passed, ["issue_author"]]
+        .assign(milestone_num=milestone_num[has_builder & has_passed])
+        .groupby("issue_author")["milestone_num"]
+        .max()
+    )
+    builder_progress = table.loc[has_builder, "issue_author"].map(highest_passed)
+    table.loc[has_builder, "builder_status"] = np.where(
+        builder_progress.ge(required_milestone).fillna(False),
+        "active",
+        "delayed",
+    )
+    return table
+
+def _transform_page_to_silver(
+    run_id: str,
+    extracted_at: datetime,
+    page: dict,
+) -> pd.DataFrame:
+
+    list_of_contents = (
+        page["data"]
+        .get("organization")
+        .get("projectV2")
+        .get("items")
+        .get("nodes")
+    )
      
     silver_df = pd.json_normalize(list_of_contents, sep="_")
     silver_df.rename(
@@ -67,12 +141,19 @@ def transform_bronze_to_silver(run_id: str, extracted_at: datetime, data: pd.Dat
         },
         inplace=True
     )
+    if "issue_author" not in silver_df.columns:
+        silver_df["issue_author"] = pd.NA
     
+    silver_df["run_id"] = run_id
     silver_df["extracted_at"] = extracted_at
     
     silver_df["reviewer"] = silver_df["reviewer"].apply(_get_reviewers)
     silver_df["milestone"] = silver_df.apply(lambda row: _get_milestone(row["issue_title"], row["milestone"]), axis=1)
     silver_df["status"] = silver_df["status"].apply(_get_status)
+    silver_df = silver_df[~silver_df["issue_author"].isin(NAMES_TO_DROP)]
+    silver_df = silver_df[
+        silver_df["issue_title"].str.match(r"\[M\d+\]", na=False)
+    ].copy()
 
     silver_df = _standardize_date_cols(silver_df, DATE_COLS)
     
@@ -81,31 +162,48 @@ def transform_bronze_to_silver(run_id: str, extracted_at: datetime, data: pd.Dat
     silver_df["days_since_update"] = (silver_df["updated_at"] - silver_df["created_at"]).dt.days
     silver_df["submission_age_days"] = (silver_df["extracted_at"] - silver_df["created_at"]).dt.days
     
-    return silver_df[silver_df["issue_title"].str.match(r"\[M\d+\]")]
-    
-if __name__ == "__main__":
-    from pipeline import init_local_config
-    from datetime import datetime, timezone
-    from pipeline.etl import transform_raw_to_bronze
-    from pipeline.etl.extract import Extraction
-    
-    config = init_local_config()
-    
-    with open(config.sample_data_path, "r") as fp:
-            data = json.load(fp)
-            
-    extraction = Extraction(
-        run_id="example_run_id",
-        extracted_at=datetime.now(timezone.utc),
-        payload=data
-    )
-    
-    bronze_df = transform_raw_to_bronze(extraction)
+    milestone_num = silver_df["milestone"].str.extract(r"(\d+)")[0].astype(int)
 
-    silver_df = transform_bronze_to_silver(
+    silver_df["current_milestone"] = np.where(
+        silver_df["status"].str.lower().eq("passed"),
+        "M" + (milestone_num + 1).clip(upper=6).astype(str),
+        silver_df["milestone"]
+    )
+    return silver_df
+
+
+def transform_bronze_to_silver(
+    run_id: str,
+    extracted_at: datetime,
+    payload: dict,
+) -> pd.DataFrame:
+ 
+    pages = payload.get("pages")
+    if not isinstance(pages, list):
+        raise ValueError("Bronze payload must contain a 'pages' list")
+
+    if not pages:
+        return pd.DataFrame()
+
+    page_frames = [
+        _transform_page_to_silver(run_id, extracted_at, page)
+        for page in pages
+    ]
+    silver_df = (
+        pd.concat(page_frames, ignore_index=True)
+        .sort_values("created_at", ascending=False)
+        .drop_duplicates(
+            subset=["issue_author", "milestone"],
+            keep="first",
+        )
+        .reset_index(drop=True)
+    )
+    return _add_builder_status(silver_df, extracted_at)
+
+
+def transform_extraction_to_silver(extraction: Extraction) -> pd.DataFrame:
+    return transform_bronze_to_silver(
         run_id=extraction.run_id,
         extracted_at=extraction.extracted_at,
-        data=bronze_df
+        payload=extraction.payload,
     )
-    
-    print(silver_df.head())

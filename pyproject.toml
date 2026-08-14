@@ -28,3 +28,4 @@ packages = ["src/pipeline"]
 [project.scripts]
 dep-pipeline-prod = "pipeline.__main__:main"
 dep-pipeline-dev = "pipeline.__main__:dev"
+dep-pipeline-silver-manual = "pipeline.__main__:silver_manual"

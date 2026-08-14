@@ -1,4 +1,4 @@
-name: Bronze ingestion
+name: Data Pipeline (Bronze to Silver)
 
 on:
   workflow_dispatch:

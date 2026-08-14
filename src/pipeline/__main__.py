@@ -14,10 +14,16 @@ from pipeline.models import Extraction, SourceConfig
 from pipeline.etl.extract import extract_submissions
 from pipeline.etl.load import (
     create_pipeline_tables,
+    extract_pending_canonical_bronze,
+    load_silver,
     load_successful_extraction_to_bronze,
     record_failure_safely
 )
-from pipeline.etl import run_bronze, should_run_bronze
+from pipeline.etl import (
+    run_bronze,
+    should_run_bronze,
+    transform_extraction_to_silver,
+)
 from pipeline.run_metadata import resolve_run_metadata
 
 logger = logging.getLogger(__name__)
@@ -97,7 +103,7 @@ def _run(
                 conn,
                 metadata,
                 started_at=started_at,
-                stage="bronze_load",
+                stage="bronze_transform",
                 error=bronze_error,
                 secrets=secrets,
                 max_error_message=_MAX_ERROR_MESSAGE_LENGTH,
@@ -126,6 +132,43 @@ def _run(
         
         
         # Log here when starting silver
+        logging.info(
+            "Starting Silver transformation for run_id=%s attempt_number=%s",
+            metadata.run_id,
+            metadata.attempt_number,
+        )
+        
+        if source_config is not None:
+            try:
+                df = transform_extraction_to_silver(extraction)
+            except Exception as silver_error:
+                record_failure_safely(
+                    conn,
+                    metadata,
+                    started_at=started_at,
+                    stage="silver_transform",
+                    error=silver_error,
+                    secrets=secrets,
+                    max_error_message=_MAX_ERROR_MESSAGE_LENGTH,
+                    logger=logger
+                )
+                raise
+            
+            try:
+                load_silver(df)
+            except Exception as silver_error:
+                record_failure_safely(
+                    conn,
+                    metadata,
+                    started_at=started_at,
+                    stage="silver_load",
+                    error=silver_error,
+                    secrets=secrets,
+                    max_error_message=_MAX_ERROR_MESSAGE_LENGTH,
+                    logger=logger
+                )
+                raise
+                
         # Log here when starting gold
 
 
@@ -168,3 +211,44 @@ def dev() -> None:
             source_config,
             error_secrets=[source_config.token],
         )
+
+def _run_pending_silver(connection_factory) -> None:
+    with connection_factory() as conn:
+        create_pipeline_tables(conn)
+        pending_extractions = extract_pending_canonical_bronze(conn)
+
+        if not pending_extractions:
+            logger.info("No pending Bronze runs to load into Silver")
+            return
+
+        for extraction in pending_extractions:
+            logger.info(
+                "Starting Silver run_id=%s attempt_number=%s",
+                extraction.run_id,
+                extraction.attempt_number,
+            )
+            try:
+                silver_df = transform_extraction_to_silver(extraction)
+                load_silver(conn, silver_df)
+            except Exception:
+                logger.exception(
+                    "Silver failed run_id=%s attempt_number=%s",
+                    extraction.run_id,
+                    extraction.attempt_number,
+                )
+                raise
+
+            logger.info(
+                "Completed Silver run_id=%s attempt_number=%s rows=%s",
+                extraction.run_id,
+                extraction.attempt_number,
+                len(silver_df),
+            )
+
+
+def silver_manual() -> None:
+    logging.basicConfig(level=logging.INFO)
+    motherduck_config = init_motherduck_config()
+    _run_pending_silver(
+        lambda: get_database_connection(motherduck_config),
+    )
