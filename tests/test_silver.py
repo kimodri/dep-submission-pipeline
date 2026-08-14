@@ -1,7 +1,14 @@
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
-from pipeline.etl.silver import transform_bronze_to_silver
+import pandas as pd
+
+from pipeline.etl.silver import (
+    transform_bronze_to_silver,
+    transform_extraction_to_silver,
+)
+from pipeline.models import Extraction
 
 
 def _page(
@@ -10,6 +17,7 @@ def _page(
     status: str,
     *,
     author: str | None = "author",
+    created_at: str = "2026-08-01T00:00:00Z",
 ) -> dict:
     return {
         "data": {
@@ -25,7 +33,7 @@ def _page(
                                     "author": (
                                         {"login": author} if author is not None else None
                                     ),
-                                    "createdAt": "2026-08-01T00:00:00Z",
+                                    "createdAt": created_at,
                                     "updatedAt": "2026-08-02T00:00:00Z",
                                     "state": "OPEN",
                                     "assignees": {"nodes": []},
@@ -49,6 +57,27 @@ def _page(
 
 
 class TransformBronzeToSilverTests(unittest.TestCase):
+    @patch("pipeline.etl.silver.transform_bronze_to_silver")
+    def test_extraction_wrapper_forwards_bronze_values(self, transform):
+        expected = pd.DataFrame({"issue_id": ["issue-1"]})
+        transform.return_value = expected
+        extracted_at = datetime(2026, 8, 3, tzinfo=timezone.utc)
+        extraction = Extraction(
+            run_id="run-123",
+            attempt_number=2,
+            extracted_at=extracted_at,
+            payload={"pages": []},
+        )
+
+        result = transform_extraction_to_silver(extraction)
+
+        self.assertIs(result, expected)
+        transform.assert_called_once_with(
+            run_id="run-123",
+            extracted_at=extracted_at,
+            payload={"pages": []},
+        )
+
     def test_builder_is_active_before_the_first_deadline(self):
         result = transform_bronze_to_silver(
             run_id="run-123",
@@ -143,6 +172,38 @@ class TransformBronzeToSilverTests(unittest.TestCase):
         )
 
         self.assertEqual(result["builder_status"].tolist(), ["active", "active"])
+
+    def test_deduplicates_across_pages_using_latest_created_at(self):
+        result = transform_bronze_to_silver(
+            run_id="run-123",
+            extracted_at=datetime(2026, 8, 3, tzinfo=timezone.utc),
+            payload={
+                "pages": [
+                    _page(
+                        "older-issue",
+                        "M2",
+                        "In review",
+                        author="builder",
+                        created_at="2026-07-20T00:00:00Z",
+                    ),
+                    _page(
+                        "newer-issue",
+                        "M2",
+                        "Passed",
+                        author="builder",
+                        created_at="2026-08-01T00:00:00Z",
+                    ),
+                ]
+            },
+        )
+
+        self.assertEqual(result["issue_id"].tolist(), ["newer-issue"])
+        self.assertFalse(
+            result.duplicated(
+                subset=["issue_author", "milestone"],
+                keep=False,
+            ).any()
+        )
 
     def test_builder_status_is_null_without_an_issue_author(self):
         result = transform_bronze_to_silver(

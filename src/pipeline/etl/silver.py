@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 from datetime import date, datetime
 
-#TODO: Dedupe silver, case kathulhur and Froncoyz
+from pipeline.models import Extraction
 
 DATE_COLS = [
     "extracted_at",
@@ -189,24 +189,21 @@ def transform_bronze_to_silver(
         _transform_page_to_silver(run_id, extracted_at, page)
         for page in pages
     ]
-    silver_df = pd.concat(page_frames, ignore_index=True)
+    silver_df = (
+        pd.concat(page_frames, ignore_index=True)
+        .sort_values("created_at", ascending=False)
+        .drop_duplicates(
+            subset=["issue_author", "milestone"],
+            keep="first",
+        )
+        .reset_index(drop=True)
+    )
     return _add_builder_status(silver_df, extracted_at)
 
 
-if __name__ == "__main__":
-    from pathlib import Path 
-    from datetime import datetime, timezone
-    import json
-    
-    root_path = Path(__file__).resolve().parents[3]
-    data_path = root_path / "data" / "rawpayload.json"
-    
-    with open(data_path, "r") as fp:
-        data = json.load(fp)
-    
-    run_id = "sample_run"
-    extracted_at = datetime.now(timezone.utc)
-    df = transform_bronze_to_silver(run_id, extracted_at, data)
-    
-    print(df.head())
-    print(len(df))
+def transform_extraction_to_silver(extraction: Extraction) -> pd.DataFrame:
+    return transform_bronze_to_silver(
+        run_id=extraction.run_id,
+        extracted_at=extraction.extracted_at,
+        payload=extraction.payload,
+    )

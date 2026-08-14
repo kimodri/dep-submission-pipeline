@@ -5,6 +5,7 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 
 import duckdb
+import pandas as pd
 
 import pipeline.__main__ as entrypoint
 from pipeline.etl.bronze import run_bronze, should_run_bronze
@@ -12,6 +13,7 @@ from pipeline.etl.errors import ExtractionError
 from pipeline.etl.load import (
     create_pipeline_tables,
     extract_canonical_bronze,
+    extract_pending_canonical_bronze,
     load_failed_attempt,
     load_successful_extraction_to_bronze,
     record_failure_safely,
@@ -255,6 +257,97 @@ class BronzeComponentTests(unittest.TestCase):
 
         self.assertEqual(canonical["attempt_number"].tolist(), [2])
 
+    def test_pending_canonical_bronze_returns_decoded_latest_attempts(self):
+        load_successful_extraction_to_bronze(
+            self.conn,
+            make_extraction(
+                RunMetadata("already-loaded", 1),
+                {"pages": [{"run": "already-loaded"}]},
+            ),
+            make_attempt(RunMetadata("already-loaded", 1)),
+        )
+        self.conn.execute(
+            """
+            INSERT INTO silver.issue_submissions (
+                run_id,
+                issue_id,
+                issue_title,
+                issue_url,
+                issue_author,
+                created_at,
+                updated_at,
+                state,
+                reviewer,
+                milestone,
+                status,
+                extracted_at,
+                is_assigned,
+                days_since_update,
+                submission_age_days,
+                current_milestone,
+                builder_status
+            )
+            VALUES (
+                'already-loaded',
+                'issue-1',
+                '[M1] Example',
+                'https://example.com/issue-1',
+                'builder',
+                now(),
+                now(),
+                'OPEN',
+                [],
+                'M1',
+                'Passed',
+                now(),
+                false,
+                0,
+                0,
+                'M2',
+                'active'
+            )
+            """
+        )
+        for attempt_number in (1, 2):
+            metadata = RunMetadata("retried", attempt_number)
+            load_successful_extraction_to_bronze(
+                self.conn,
+                make_extraction(
+                    metadata,
+                    {"pages": [{"attempt": attempt_number}]},
+                ),
+                make_attempt(metadata),
+            )
+        pending_metadata = RunMetadata("pending", 1)
+        load_successful_extraction_to_bronze(
+            self.conn,
+            make_extraction(
+                pending_metadata,
+                {"pages": [{"run": "pending"}]},
+            ),
+            make_attempt(pending_metadata),
+        )
+        failed_metadata = RunMetadata("failed", 1)
+        load_failed_attempt(
+            self.conn,
+            make_attempt(
+                failed_metadata,
+                AttemptStatus.FAILED,
+                error_stage="extraction",
+                error_type="ExtractionError",
+                error_message="temporary failure",
+            ),
+        )
+
+        pending = extract_pending_canonical_bronze(self.conn)
+
+        self.assertEqual(
+            [(row.run_id, row.attempt_number) for row in pending],
+            [("pending", 1), ("retried", 2)],
+        )
+        self.assertEqual(pending[0].payload, {"pages": [{"run": "pending"}]})
+        self.assertEqual(pending[1].payload, {"pages": [{"attempt": 2}]})
+
 
 class MainOrchestrationTests(unittest.TestCase):
     def setUp(self):
@@ -492,6 +585,159 @@ class MainOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(record_failure.call_args.kwargs["stage"], "bronze_load")
         self.assertIs(record_failure.call_args.kwargs["error"], load_error)
+
+
+class SilverOrchestrationTests(unittest.TestCase):
+    def setUp(self):
+        self.conn = Mock()
+        self.connection_context = MagicMock()
+        self.connection_context.__enter__.return_value = self.conn
+        self.connection_factory = Mock(return_value=self.connection_context)
+        self.first = make_extraction(RunMetadata("run-1", 1))
+        self.second = make_extraction(RunMetadata("run-2", 1))
+
+    def test_pending_runs_transform_and_load_in_order(self):
+        events: list[str] = []
+
+        with (
+            patch.object(
+                entrypoint,
+                "create_pipeline_tables",
+                side_effect=lambda conn: events.append("create_tables"),
+            ),
+            patch.object(
+                entrypoint,
+                "extract_pending_canonical_bronze",
+                side_effect=lambda conn: (
+                    events.append("extract_pending") or [self.first, self.second]
+                ),
+            ),
+            patch.object(
+                entrypoint,
+                "transform_extraction_to_silver",
+                side_effect=lambda extraction: (
+                    events.append(f"transform:{extraction.run_id}")
+                    or pd.DataFrame({"run_id": [extraction.run_id]})
+                ),
+            ),
+            patch.object(
+                entrypoint,
+                "load_silver",
+                side_effect=lambda conn, df: events.append(
+                    f"load:{df.iloc[0]['run_id']}"
+                ),
+            ),
+        ):
+            entrypoint._run_pending_silver(self.connection_factory)
+
+        self.assertEqual(
+            events,
+            [
+                "create_tables",
+                "extract_pending",
+                "transform:run-1",
+                "load:run-1",
+                "transform:run-2",
+                "load:run-2",
+            ],
+        )
+
+    def test_no_pending_runs_exits_without_transforming(self):
+        with (
+            patch.object(entrypoint, "create_pipeline_tables"),
+            patch.object(
+                entrypoint,
+                "extract_pending_canonical_bronze",
+                return_value=[],
+            ),
+            patch.object(entrypoint, "transform_extraction_to_silver") as transform,
+            patch.object(entrypoint, "load_silver") as load,
+            patch.object(entrypoint.logger, "info") as log,
+        ):
+            entrypoint._run_pending_silver(self.connection_factory)
+
+        transform.assert_not_called()
+        load.assert_not_called()
+        log.assert_called_once_with("No pending Bronze runs to load into Silver")
+
+    def test_transform_error_is_logged_and_reraised(self):
+        error = ValueError("invalid Bronze payload")
+
+        with (
+            patch.object(entrypoint, "create_pipeline_tables"),
+            patch.object(
+                entrypoint,
+                "extract_pending_canonical_bronze",
+                return_value=[self.first, self.second],
+            ),
+            patch.object(
+                entrypoint,
+                "transform_extraction_to_silver",
+                side_effect=error,
+            ) as transform,
+            patch.object(entrypoint, "load_silver") as load,
+            patch.object(entrypoint.logger, "exception") as log_exception,
+        ):
+            with self.assertRaises(ValueError):
+                entrypoint._run_pending_silver(self.connection_factory)
+
+        transform.assert_called_once_with(self.first)
+        load.assert_not_called()
+        log_exception.assert_called_once()
+
+    def test_load_error_is_logged_and_reraised(self):
+        error = duckdb.ConstraintException("duplicate Silver row")
+        silver_df = pd.DataFrame({"run_id": ["run-1"]})
+
+        with (
+            patch.object(entrypoint, "create_pipeline_tables"),
+            patch.object(
+                entrypoint,
+                "extract_pending_canonical_bronze",
+                return_value=[self.first, self.second],
+            ),
+            patch.object(
+                entrypoint,
+                "transform_extraction_to_silver",
+                return_value=silver_df,
+            ) as transform,
+            patch.object(entrypoint, "load_silver", side_effect=error) as load,
+            patch.object(entrypoint.logger, "exception") as log_exception,
+        ):
+            with self.assertRaises(duckdb.ConstraintException):
+                entrypoint._run_pending_silver(self.connection_factory)
+
+        transform.assert_called_once_with(self.first)
+        load.assert_called_once_with(self.conn, silver_df)
+        log_exception.assert_called_once()
+
+    def test_silver_command_uses_motherduck_connection(self):
+        motherduck_config = MotherDuckConfig(
+            database_path="md:example",
+            token="motherduck-secret",
+        )
+        connection = Mock()
+
+        with (
+            patch.object(
+                entrypoint,
+                "init_motherduck_config",
+                return_value=motherduck_config,
+            ) as init_motherduck,
+            patch.object(
+                entrypoint,
+                "get_database_connection",
+                return_value=connection,
+            ) as get_connection,
+            patch.object(entrypoint, "_run_pending_silver") as run,
+        ):
+            entrypoint.silver()
+
+            connection_factory = run.call_args.args[0]
+            self.assertIs(connection_factory(), connection)
+
+        init_motherduck.assert_called_once_with()
+        get_connection.assert_called_once_with(motherduck_config)
 
 
 if __name__ == "__main__":

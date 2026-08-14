@@ -324,6 +324,56 @@ def extract_canonical_bronze(conn: duckdb.DuckDBPyConnection):
         """
     ).df()
 
+def extract_pending_canonical_bronze(
+    conn: duckdb.DuckDBPyConnection,
+) -> list[Extraction]:
+    rows = conn.execute(
+        """
+        WITH canonical_bronze AS (
+            SELECT b.*
+            FROM bronze.raw_issue_extractions AS b
+            JOIN ops.pipeline_attempts AS a
+              USING (run_id, attempt_number)
+            WHERE a.attempt_status = 'succeeded'
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY b.run_id
+                ORDER BY b.attempt_number DESC
+            ) = 1
+        )
+        SELECT
+            c.run_id,
+            c.attempt_number,
+            c.extracted_at,
+            c.payload
+        FROM canonical_bronze AS c
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM silver.issue_submissions AS s
+            WHERE s.run_id = c.run_id
+        )
+        ORDER BY c.run_id
+        """
+    ).fetchall()
+
+    pending_extractions = []
+    for run_id, attempt_number, extracted_at, payload in rows:
+        if isinstance(payload, str):
+            payload = json.loads(payload)
+        if not isinstance(payload, dict):
+            raise TypeError(
+                f"Bronze payload for run_id={run_id} must decode to a dictionary"
+            )
+        pending_extractions.append(
+            Extraction(
+                run_id=run_id,
+                attempt_number=attempt_number,
+                extracted_at=extracted_at,
+                payload=payload,
+            )
+        )
+
+    return pending_extractions
+
 def extract_bronze_submission(
     conn: duckdb.DuckDBPyConnection,
     run_id: str,
