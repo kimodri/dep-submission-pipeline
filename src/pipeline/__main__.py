@@ -155,7 +155,7 @@ def _run(
                 raise
             
             try:
-                load_silver(df)
+                load_silver(conn, df)
             except Exception as silver_error:
                 record_failure_safely(
                     conn,
