@@ -20,3 +20,7 @@ source payloads:
 
 GitHub Actions supplies `GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` automatically.
 Local runs use a generated `local-<uuid>` run ID and attempt number `1`.
+
+TODO:
+- Load to gold
+- indexing
