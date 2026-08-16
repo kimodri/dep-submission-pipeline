@@ -468,6 +468,12 @@ class MainOrchestrationTests(unittest.TestCase):
         events: list[str] = []
         extraction = make_extraction(self.metadata)
         attempt = make_attempt(self.metadata)
+        silver_df = pd.DataFrame({"run_id": [self.metadata.run_id]})
+        gold_tables = {
+            "fact_submission_snapshot": pd.DataFrame(
+                {"run_id": [self.metadata.run_id]}
+            )
+        }
 
         def create_tables(conn):
             events.append("create_tables")
@@ -487,6 +493,23 @@ class MainOrchestrationTests(unittest.TestCase):
         def load(conn, extraction_row, attempt_row):
             events.append("load")
 
+        def silver_transform(extraction_row):
+            events.append("silver_transform")
+            return silver_df
+
+        def silver_load(conn, incoming_df):
+            self.assertIs(incoming_df, silver_df)
+            events.append("silver_load")
+
+        def gold_transform(incoming_df):
+            self.assertIs(incoming_df, silver_df)
+            events.append("gold_transform")
+            return gold_tables
+
+        def gold_load(conn, incoming_tables):
+            self.assertIs(incoming_tables, gold_tables)
+            events.append("gold_load")
+
         with (
             patch.object(
                 entrypoint,
@@ -502,6 +525,18 @@ class MainOrchestrationTests(unittest.TestCase):
                 "load_successful_extraction_to_bronze",
                 side_effect=load,
             ),
+            patch.object(
+                entrypoint,
+                "transform_extraction_to_silver",
+                side_effect=silver_transform,
+            ),
+            patch.object(entrypoint, "load_silver", side_effect=silver_load),
+            patch.object(
+                entrypoint,
+                "transform_silver_to_gold",
+                side_effect=gold_transform,
+            ),
+            patch.object(entrypoint, "load_gold", side_effect=gold_load),
         ):
             entrypoint._run(
                 self.connection_factory,
@@ -511,7 +546,17 @@ class MainOrchestrationTests(unittest.TestCase):
 
         self.assertEqual(
             events,
-            ["create_tables", "preflight", "extract", "transform", "load"],
+            [
+                "create_tables",
+                "preflight",
+                "extract",
+                "transform",
+                "load",
+                "silver_transform",
+                "silver_load",
+                "gold_transform",
+                "gold_load",
+            ],
         )
 
     def test_extraction_error_is_recorded_and_reraised(self):
@@ -727,13 +772,12 @@ class SilverOrchestrationTests(unittest.TestCase):
             ) as get_connection,
             patch.object(entrypoint, "_run_pending_silver") as run,
         ):
-            entrypoint.silver()
+            entrypoint.silver_manual()
 
             connection_factory = run.call_args.args[0]
             self.assertIs(connection_factory(), connection)
-
-        init_motherduck.assert_called_once_with()
-        get_connection.assert_called_once_with(motherduck_config)
+            init_motherduck.assert_called_once_with()
+            get_connection.assert_called_once_with(motherduck_config)
 
 
 if __name__ == "__main__":

@@ -11,13 +11,22 @@ This pipeline follows the medallion architecture with:
 - **Silver**: cleaned and validated data
 - **Gold**: Modeled data
 
+<p align="center">
+  <img src="./images/medallion.png" alt="medallion">
+</p>
+
 **Bronze** contains the raw extractions and the metadata needed to be true to the source and allow reruns:
 
-![]("./images/bronze.png")
+<p align="center">
+  <img src="./images/bronze.jpeg" alt="bronze">
+</p>
 
 **Silver** contains the cleaned, validated, and derived data needed for analysis:
 
-![]("./images/silver.png")
+<p align="center">
+  <img src="./images/silver.jpeg" alt="silver">
+</p>
+
 
 **Gold** contains a modeled schema for easier query. In addition this Gold architecture follows the **Kimball Model**.
 
@@ -35,7 +44,9 @@ Given the grain the uniqueness rule should be:
 
 Only after this definition, the developer should go after `dimensions` and `measurements/facts`:
 
-![]("./images/gold.png")
+<p align="center">
+  <img src="./images/gold.jpeg" alt="gold">
+</p>
 
 ---
 ### Analysis
@@ -55,5 +66,4 @@ I am interested in answering the following questions which will be translated to
 
 
 TODO:
-- Load to gold
 - indexing

@@ -15,6 +15,8 @@ from pipeline.etl.extract import extract_submissions
 from pipeline.etl.load import (
     create_pipeline_tables,
     extract_pending_canonical_bronze,
+    extract_pending_silver,
+    load_gold,
     load_silver,
     load_successful_extraction_to_bronze,
     record_failure_safely
@@ -23,6 +25,7 @@ from pipeline.etl import (
     run_bronze,
     should_run_bronze,
     transform_extraction_to_silver,
+    transform_silver_to_gold,
 )
 from pipeline.run_metadata import resolve_run_metadata
 
@@ -140,7 +143,7 @@ def _run(
         
         if source_config is not None:
             try:
-                df = transform_extraction_to_silver(extraction)
+                silver_df = transform_extraction_to_silver(extraction)
             except Exception as silver_error:
                 record_failure_safely(
                     conn,
@@ -155,7 +158,7 @@ def _run(
                 raise
             
             try:
-                load_silver(conn, df)
+                load_silver(conn, silver_df)
             except Exception as silver_error:
                 record_failure_safely(
                     conn,
@@ -168,8 +171,41 @@ def _run(
                     logger=logger
                 )
                 raise
-                
-        # Log here when starting gold
+
+            logging.info(
+                "Starting Gold transformation for run_id=%s attempt_number=%s",
+                metadata.run_id,
+                metadata.attempt_number,
+            )
+            try:
+                gold_tables = transform_silver_to_gold(silver_df)
+            except Exception as gold_error:
+                record_failure_safely(
+                    conn,
+                    metadata,
+                    started_at=started_at,
+                    stage="gold_transform",
+                    error=gold_error,
+                    secrets=secrets,
+                    max_error_message=_MAX_ERROR_MESSAGE_LENGTH,
+                    logger=logger,
+                )
+                raise
+
+            try:
+                load_gold(conn, gold_tables)
+            except Exception as gold_error:
+                record_failure_safely(
+                    conn,
+                    metadata,
+                    started_at=started_at,
+                    stage="gold_load",
+                    error=gold_error,
+                    secrets=secrets,
+                    max_error_message=_MAX_ERROR_MESSAGE_LENGTH,
+                    logger=logger,
+                )
+                raise
 
 
 def main() -> None:
@@ -250,5 +286,40 @@ def silver_manual() -> None:
     logging.basicConfig(level=logging.INFO)
     motherduck_config = init_motherduck_config()
     _run_pending_silver(
+        lambda: get_database_connection(motherduck_config),
+    )
+
+
+def _run_pending_gold(connection_factory) -> None:
+    with connection_factory() as conn:
+        create_pipeline_tables(conn)
+        pending_runs = extract_pending_silver(conn)
+
+        if not pending_runs:
+            logger.info("No pending Silver runs to load into Gold")
+            return
+
+        for silver_df in pending_runs:
+            run_id = silver_df["run_id"].iloc[0]
+            logger.info("Starting Gold run_id=%s", run_id)
+            try:
+                gold_tables = transform_silver_to_gold(silver_df)
+                load_gold(conn, gold_tables)
+            except Exception:
+                logger.exception("Gold failed run_id=%s", run_id)
+                raise
+
+            logger.info(
+                "Completed Gold run_id=%s fact_rows=%s bridge_rows=%s",
+                run_id,
+                len(gold_tables["fact_submission_snapshot"]),
+                len(gold_tables["bridge_submission_reviewer"]),
+            )
+
+
+def gold_manual() -> None:
+    logging.basicConfig(level=logging.INFO)
+    motherduck_config = init_motherduck_config()
+    _run_pending_gold(
         lambda: get_database_connection(motherduck_config),
     )

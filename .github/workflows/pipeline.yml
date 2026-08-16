@@ -1,4 +1,4 @@
-name: Data Pipeline (Bronze to Silver)
+name: Data Pipeline
 
 on:
   workflow_dispatch:
