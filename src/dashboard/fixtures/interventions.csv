@@ -1,0 +1,11 @@
+builder,current_milestone,status,schedule_status,reviewer,issue_state,submission_age_days,days_since_update,next_actor,next_action,issue_url
+alex-data,M2,Needs Improvement,Delayed,maria-reviewer,OPEN,12,3,Builder,Revise and resubmit,https://example.com/submissions/101
+bea-builds,M3,In review,On track,renzo-reviewer,OPEN,4,2,Reviewer,Complete review,https://example.com/submissions/102
+cloud-carlo,M1,Unchecked/Unassigned,Delayed,,OPEN,19,8,Program admin,Assign a reviewer,https://example.com/submissions/103
+dana-pipelines,M4,Passed,On track,mina-reviewer,CLOSED,2,1,Builder,Begin next milestone,https://example.com/submissions/104
+etl-erin,M2,In review,Delayed,renzo-reviewer,OPEN,10,6,Reviewer,Complete review,https://example.com/submissions/105
+frank-flows,M3,Needs Improvement,Delayed,maria-reviewer,OPEN,15,7,Builder,Revise and resubmit,https://example.com/submissions/106
+gina-gold,M4,In review,On track,mina-reviewer,OPEN,3,1,Reviewer,Complete review,https://example.com/submissions/107
+harry-hooks,M1,Unchecked/Unassigned,Delayed,,OPEN,22,11,Program admin,Assign a reviewer,https://example.com/submissions/108
+isabel-ingest,M3,Passed,On track,maria-reviewer,CLOSED,1,1,Builder,Begin next milestone,https://example.com/submissions/109
+long-builder-name-for-responsive-layout-testing,M2,Needs Improvement,Delayed,reviewer-with-a-long-display-name,OPEN,14,5,Builder,Revise and resubmit,https://example.com/submissions/110

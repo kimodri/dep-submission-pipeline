@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "components/build_meta.html" import build_meta %}
+{% from "components/kpi_card.html" import kpi_card %}
+{% from "components/chart_card.html" import chart_card %}
+
+{% block title %}Reviewers{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Review operations</p>
+    <h1>Reviewer Workload</h1>
+    <p class="page-description">Balance unresolved work and surface submissions that still need an owner.</p>
+  </div>
+  {{ build_meta(generated_at) }}
+</header>
+
+<section class="kpi-grid three-up" aria-label="Reviewer workload summary">
+  {{ kpi_card("Unresolved", unresolved_total, "Across all reviewers", "primary") }}
+  {{ kpi_card("Active reviewers", reviewer_count, "With assigned work", "success") }}
+  {{ kpi_card("Unassigned", unassigned_count, "Needs a reviewer", "warning") }}
+</section>
+
+{{ chart_card(
+  "Unresolved work by reviewer",
+  "Open submissions currently assigned to each reviewer; unassigned work is highlighted.",
+  reviewer_chart,
+  "panel-spaced reviewer-panel"
+) }}
+{% endblock %}

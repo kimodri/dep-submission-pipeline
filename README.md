@@ -63,7 +63,3 @@ I am interested in answering the following questions which will be translated to
    - A table showing each builder's current milestone, status, reviewer, issue state, submission age, and next action.
 5. How much unresolved work does each reviewer have?
    - A horizontal bar chart showing the number of unresolved submissions assigned to each reviewer.
-
-
-TODO:
-- indexing

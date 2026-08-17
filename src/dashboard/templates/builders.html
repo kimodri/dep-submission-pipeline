@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% from "components/build_meta.html" import build_meta %}
+{% from "components/empty_state.html" import empty_state %}
+
+{% block title %}Builders{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Builder follow-up</p>
+    <h1>Intervention Queue</h1>
+    <p class="page-description">Find builders who need a review, a follow-up, or help moving forward.</p>
+  </div>
+  {{ build_meta(generated_at) }}
+</header>
+
+<section class="panel table-panel" aria-labelledby="intervention-title">
+  <div class="panel-heading table-panel-heading">
+    <div>
+      <h2 id="intervention-title">Builder interventions</h2>
+      <p><span data-visible-count>{{ intervention_count }}</span> of {{ intervention_count }} builders shown</p>
+    </div>
+  </div>
+
+  {% if interventions %}
+  <div class="table-controls" data-table-controls>
+    <label class="search-control">
+      <span class="sr-only">Search builders</span>
+      <span class="search-symbol" aria-hidden="true">⌕</span>
+      <input type="search" placeholder="Search builder or reviewer" data-table-search autocomplete="off">
+    </label>
+    <label class="select-control">
+      <span>Status</span>
+      <select data-table-status>
+        <option value="">All statuses</option>
+        {% for status in statuses %}<option value="{{ status|lower }}">{{ status }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="select-control">
+      <span>Schedule</span>
+      <select data-table-schedule>
+        <option value="">All schedules</option>
+        {% for schedule in schedules %}<option value="{{ schedule|lower }}">{{ schedule }}</option>{% endfor %}
+      </select>
+    </label>
+  </div>
+
+  <div class="table-scroll">
+    <table class="data-table" data-intervention-table>
+      <caption class="sr-only">Builders requiring intervention and their current submission details</caption>
+      <thead>
+        <tr>
+          <th scope="col">Builder</th>
+          <th scope="col">Milestone</th>
+          <th scope="col">Status</th>
+          <th scope="col">Schedule</th>
+          <th scope="col">Reviewer</th>
+          <th scope="col">Issue</th>
+          <th scope="col">Age</th>
+          <th scope="col">Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in interventions %}
+        <tr data-intervention-row
+            data-search="{{ item.builder|lower }} {{ item.reviewer|lower }}"
+            data-status="{{ item.status|lower }}"
+            data-schedule="{{ item.schedule_status|lower }}">
+          <td><a class="builder-link" href="{{ item.issue_url }}" target="_blank" rel="noopener noreferrer">{{ item.builder }}</a></td>
+          <td><span class="milestone-tag">{{ item.current_milestone }}</span></td>
+          <td><span class="status-badge status-{{ item.status|lower|replace(' ', '-') }}">{{ item.status }}</span></td>
+          <td><span class="schedule-badge schedule-{{ item.schedule_status|lower|replace(' ', '-') }}">{{ item.schedule_status }}</span></td>
+          <td>{{ item.reviewer }}</td>
+          <td>{{ item.issue_state|title }}</td>
+          <td>{{ item.submission_age_days }} days</td>
+          <td>{{ item.days_since_update }} days ago</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <div class="filter-empty" data-filter-empty hidden role="status">
+    <strong>No matching builders</strong>
+    <span>Try changing your search or filters.</span>
+  </div>
+  {% else %}
+    {{ empty_state("No intervention data", "Builder intervention records will appear after the next data build.") }}
+  {% endif %}
+</section>
+{% endblock %}

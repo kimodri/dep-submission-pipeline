@@ -1,0 +1,56 @@
+{% from "components/navigation.html" import navigation_menu, theme_toggle %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="DEP Open Track builder submission dashboard">
+  <title>{% block title %}Dashboard{% endblock %} · DEP Open Track</title>
+  <script>
+    (function () {
+      var saved;
+      try { saved = localStorage.getItem("dep-dashboard-theme"); } catch (error) {}
+      var theme = saved === "light" || saved === "dark"
+        ? saved
+        : (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.colorScheme = theme;
+    }());
+  </script>
+  <link rel="stylesheet" href="{{ asset_prefix }}assets/css/dashboard.css">
+  <script src="{{ asset_prefix }}assets/vendor/plotly.min.js"></script>
+  <script defer src="{{ asset_prefix }}assets/js/dashboard.js"></script>
+</head>
+<body data-page="{{ page_id }}">
+  <a class="skip-link" href="#main-content">Skip to main content</a>
+
+  <div class="drawer-overlay" data-drawer-overlay hidden></div>
+  <aside class="sidebar" id="site-sidebar" data-sidebar aria-label="Dashboard sidebar">
+    <div class="sidebar-brand">
+      <img class="brand-logo" src="{{ asset_prefix }}assets/images/dep-logo.png" alt="" width="42" height="42">
+      <div>
+        <strong>DEP Open Track</strong>
+        <span>Submission insights</span>
+      </div>
+      <button class="drawer-close" type="button" data-drawer-close aria-label="Close navigation">×</button>
+    </div>
+    {{ navigation_menu(navigation, page_id) }}
+    <div class="sidebar-footer">
+      {{ theme_toggle() }}
+    </div>
+  </aside>
+
+  <div class="app-shell">
+    <header class="mobile-header">
+      <button class="menu-button" type="button" data-drawer-open aria-controls="site-sidebar" aria-expanded="false">
+        <span aria-hidden="true">☰</span><span class="sr-only">Open navigation</span>
+      </button>
+      <div class="mobile-brand"><img class="brand-logo" src="{{ asset_prefix }}assets/images/dep-logo.png" alt="" width="34" height="34"><strong>DEP Open Track</strong></div>
+    </header>
+
+    <main id="main-content" class="main-content" tabindex="-1">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

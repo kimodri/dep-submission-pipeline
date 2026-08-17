@@ -1,0 +1,10 @@
+{% macro kpi_card(label, value, detail, tone="primary") %}
+<article class="kpi-card">
+  <div>
+    <p class="kpi-label">{{ label }}</p>
+    <p class="kpi-value">{{ value }}</p>
+    <p class="kpi-detail">{{ detail }}</p>
+  </div>
+  <span class="kpi-indicator tone-{{ tone }}" aria-hidden="true"></span>
+</article>
+{% endmacro %}
