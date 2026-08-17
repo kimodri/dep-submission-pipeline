@@ -116,6 +116,41 @@ def _add_milestone_attributes(df: pd.DataFrame) -> pd.DataFrame:
     return dim_milestone
 
 
+def _create_dim_milestone(df: pd.DataFrame) -> pd.DataFrame:
+    configured_milestones = pd.DataFrame(
+        {
+            "milestone": [
+                f"M{milestone_number}"
+                for milestone_number in MILESTONE_DEADLINES
+            ]
+        }
+    )
+    observed_milestones = df.loc[
+        df["milestone"].notna(),
+        ["milestone"],
+    ]
+    dim_milestone = (
+        pd.concat(
+            [configured_milestones, observed_milestones],
+            ignore_index=True,
+        )
+        .drop_duplicates(subset=["milestone"])
+        .reset_index(drop=True)
+    )
+    dim_milestone = _add_milestone_attributes(dim_milestone)
+    dim_milestone = dim_milestone.sort_values(
+        ["milestone_number", "milestone"],
+        kind="stable",
+        na_position="last",
+    ).reset_index(drop=True)
+    dim_milestone.insert(
+        0,
+        "milestone_key",
+        range(1, len(dim_milestone) + 1),
+    )
+    return dim_milestone
+
+
 def _merge_dimension_key_to_fact(
     fact_df: pd.DataFrame,
     dim_df: pd.DataFrame,
@@ -198,10 +233,9 @@ def transform_silver_to_gold(
     dimensions = {
         name: _create_dim(gold_table, **config)
         for name, config in DIMENSION_CONFIG.items()
+        if name != "dim_milestone"
     }
-    dimensions["dim_milestone"] = _add_milestone_attributes(
-        dimensions["dim_milestone"]
-    )
+    dimensions["dim_milestone"] = _create_dim_milestone(gold_table)
 
     dim_date = _add_date_attributes(_create_dim_date(gold_table, DATE_COLUMNS))
     dimensions["dim_date"] = dim_date

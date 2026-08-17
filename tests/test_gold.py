@@ -105,25 +105,48 @@ class TransformSilverToGoldTests(unittest.TestCase):
 
     def test_adds_milestone_numbers_and_deadlines(self):
         result = transform_silver_to_gold(
-            pd.DataFrame(
-                [
-                    _silver_row("issue-m0", milestone="M0"),
-                    _silver_row("issue-m6", milestone="M6"),
-                ]
-            )
+            pd.DataFrame([_silver_row("issue-m2", milestone="M2")])
         )
         milestones = result["dimensions"]["dim_milestone"].set_index(
             "milestone"
         )
 
-        self.assertEqual(milestones.loc["M0", "milestone_number"], 0)
-        self.assertEqual(
-            milestones.loc["M0", "deadline_date"], date(2026, 6, 28)
+        expected_deadlines = {
+            "M0": date(2026, 6, 28),
+            "M1": date(2026, 7, 19),
+            "M2": date(2026, 8, 2),
+            "M3": date(2026, 9, 13),
+            "M4": date(2026, 10, 11),
+            "M5": date(2026, 11, 8),
+            "M6": date(2026, 12, 6),
+        }
+        self.assertEqual(set(milestones.index), set(expected_deadlines))
+        for milestone, deadline in expected_deadlines.items():
+            with self.subTest(milestone=milestone):
+                self.assertEqual(
+                    milestones.loc[milestone, "milestone_number"],
+                    int(milestone[1:]),
+                )
+                self.assertEqual(
+                    milestones.loc[milestone, "deadline_date"],
+                    deadline,
+                )
+
+        fact_key = result["fact_submission_snapshot"]["milestone_key"].item()
+        self.assertEqual(fact_key, milestones.loc["M2", "milestone_key"])
+
+    def test_preserves_an_unconfigured_observed_milestone(self):
+        result = transform_silver_to_gold(
+            pd.DataFrame([_silver_row("issue-m7", milestone="M7")])
         )
-        self.assertEqual(milestones.loc["M6", "milestone_number"], 6)
-        self.assertEqual(
-            milestones.loc["M6", "deadline_date"], date(2026, 12, 6)
+        milestones = result["dimensions"]["dim_milestone"].set_index(
+            "milestone"
         )
+
+        self.assertEqual(milestones.loc["M7", "milestone_number"], 7)
+        self.assertTrue(pd.isna(milestones.loc["M7", "deadline_date"]))
+        fact_key = result["fact_submission_snapshot"]["milestone_key"].item()
+        self.assertEqual(fact_key, milestones.loc["M7", "milestone_key"])
 
     def test_preserves_multiple_extractions_of_the_same_issue(self):
         result = transform_silver_to_gold(
@@ -219,6 +242,66 @@ class GoldLoadingTests(unittest.TestCase):
                 "gold.bridge_submission_reviewer",
                 "ops.gold_loads",
             }.issubset(tables)
+        )
+
+    def test_load_seeds_all_milestones_and_preserves_existing_keys(self):
+        first_silver = pd.DataFrame(
+            [_silver_row("issue-m2", milestone="M2")]
+        )
+        load_gold(self.conn, transform_silver_to_gold(first_silver))
+        first_m2_key = self.conn.execute(
+            """
+            SELECT milestone_key
+            FROM gold.dim_milestone
+            WHERE milestone = 'M2'
+            """
+        ).fetchone()[0]
+
+        second_silver = pd.DataFrame(
+            [
+                _silver_row(
+                    "issue-m3",
+                    milestone="M3",
+                    run_id="run-2",
+                    extracted_at="2026-08-04T00:00:00Z",
+                )
+            ]
+        )
+        load_gold(self.conn, transform_silver_to_gold(second_silver))
+
+        milestones = self.conn.execute(
+            """
+            SELECT milestone, milestone_number, deadline_date
+            FROM gold.dim_milestone
+            ORDER BY milestone_number
+            """
+        ).fetchall()
+        persisted_m2_key = self.conn.execute(
+            """
+            SELECT milestone_key
+            FROM gold.dim_milestone
+            WHERE milestone = 'M2'
+            """
+        ).fetchone()[0]
+
+        self.assertEqual(
+            milestones,
+            [
+                ("M0", 0, date(2026, 6, 28)),
+                ("M1", 1, date(2026, 7, 19)),
+                ("M2", 2, date(2026, 8, 2)),
+                ("M3", 3, date(2026, 9, 13)),
+                ("M4", 4, date(2026, 10, 11)),
+                ("M5", 5, date(2026, 11, 8)),
+                ("M6", 6, date(2026, 12, 6)),
+            ],
+        )
+        self.assertEqual(persisted_m2_key, first_m2_key)
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT count(*) FROM gold.fact_submission_snapshot"
+            ).fetchone()[0],
+            2,
         )
 
     def test_extracts_pending_silver_by_run_and_ignores_legacy_columns(self):
