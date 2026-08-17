@@ -3,8 +3,8 @@ name: Data Pipeline
 on:
   workflow_dispatch:
   schedule:
-    # 00:17, 06:17, ..., 24:17 Asia/Manila (UTC+8)
-    - cron: "17 4-22/6 * * *"
+    # - cron: "17 4-22/6 * * *"
+    - cron: "11 * * * *"
 
 permissions:
   contents: read

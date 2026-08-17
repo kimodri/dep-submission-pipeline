@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% from "components/build_meta.html" import build_meta %}
+{% from "components/kpi_card.html" import kpi_card %}
+{% from "components/chart_card.html" import chart_card %}
+
+{% block title %}Overview{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Program overview</p>
+    <h1>Builder Submission Dashboard</h1>
+    <p class="page-description">A clear view of milestone submissions, schedule health, and progress over time.</p>
+  </div>
+  {{ build_meta(generated_at) }}
+</header>
+
+<section class="kpi-grid two-up" aria-label="Builder schedule summary">
+  {% for card in schedule_kpis %}
+    {{ kpi_card(card.label, card.value, card.detail, card.tone) }}
+  {% endfor %}
+</section>
+
+{{ chart_card(
+  "Submissions by milestone",
+  "Submission status distribution across the Open Track milestones.",
+  submission_chart,
+  "panel-spaced"
+) }}
+
+{{ chart_card(
+  "Builder progress over time",
+  "Average milestone completion rate for each pipeline extraction.",
+  progress_chart,
+  "panel-spaced"
+) }}
+{% endblock %}
