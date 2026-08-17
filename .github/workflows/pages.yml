@@ -16,6 +16,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      pages: read
 
     steps:
       - name: Check out repository
