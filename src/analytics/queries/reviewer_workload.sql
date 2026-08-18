@@ -7,9 +7,40 @@ WITH latest_extraction AS (
     )
 ),
 
+ranked_builder_submissions AS (
+    SELECT
+        f.submission_snapshot_key,
+        f.state_key,
+        f.status_key,
+        ROW_NUMBER() OVER (
+            PARTITION BY i.issue_author
+            ORDER BY
+                m.milestone_number DESC,
+                f.updated_at DESC,
+                f.created_at DESC,
+                f.issue_key DESC,
+                f.submission_snapshot_key DESC
+        ) AS builder_row_number
+    FROM latest_extraction AS f
+    JOIN gold.dim_issue AS i
+        USING (issue_key)
+    JOIN gold.dim_milestone AS m
+        USING (milestone_key)
+    WHERE i.issue_author IS NOT NULL
+),
+
+current_builder_submissions AS (
+    SELECT
+        submission_snapshot_key,
+        state_key,
+        status_key
+    FROM ranked_builder_submissions
+    WHERE builder_row_number = 1
+),
+
 unresolved_submissions AS (
     SELECT f.submission_snapshot_key
-    FROM latest_extraction AS f
+    FROM current_builder_submissions AS f
     JOIN gold.dim_state AS st
         USING (state_key)
     LEFT JOIN gold.dim_status AS s

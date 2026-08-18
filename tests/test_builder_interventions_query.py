@@ -121,6 +121,7 @@ class BuilderInterventionsQueryTests(unittest.TestCase):
             (11, "tie-new", "tie"),
             (12, "old-only", "old-only"),
             (13, "null-author", None),
+            (14, "advance-lower-unassigned", "advance"),
         ]
         self.conn.executemany(
             "INSERT INTO gold.dim_issue VALUES (?, ?, ?)",
@@ -144,6 +145,8 @@ class BuilderInterventionsQueryTests(unittest.TestCase):
             (11, 11, 1, 3, 5, "2026-08-16 10:00:00+08", latest, 1, 7),
             (12, 12, 1, 1, 2, "2026-08-09 10:00:00+08", older, 1, 3),
             (13, 13, 1, 1, 2, "2026-08-16 10:00:00+08", latest, 1, 3),
+            # This lower unassigned submission is resolved by advance's passed M4.
+            (14, 14, 1, 1, 1, "2026-08-01 10:00:00+08", latest, 16, 30),
         ]
         self.conn.executemany(
             """
@@ -224,17 +227,18 @@ class BuilderInterventionsQueryTests(unittest.TestCase):
         self.assertEqual(
             workload,
             {
-                "Unassigned": 4,
+                "Unassigned": 3,
                 "alpha-reviewer": 4,
                 "zeta-reviewer": 1,
             },
         )
 
-    def test_reviewer_workload_excludes_closed_passed_and_old_snapshots(self):
+    def test_reviewer_workload_uses_only_each_builders_highest_milestone(self):
         result = self.conn.execute(self.reviewer_workload_query).fetchdf()
+        workload = result.set_index("reviewer")["unresolved_count"]
 
-        self.assertEqual(result["unresolved_count"].sum(), 9)
-        self.assertNotIn("old-only", result["reviewer"].tolist())
+        self.assertEqual(workload.loc["Unassigned"], 3)
+        self.assertEqual(result["unresolved_count"].sum(), 8)
 
 
 if __name__ == "__main__":
