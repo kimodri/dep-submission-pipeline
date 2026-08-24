@@ -15,7 +15,7 @@
   {{ build_meta(generated_at) }}
 </header>
 
-<section class="kpi-grid two-up" aria-label="Builder schedule summary">
+<section class="kpi-grid three-up" aria-label="Builder schedule summary">
   {% for card in schedule_kpis %}
     {{ kpi_card(card.label, card.value, card.detail, card.tone) }}
   {% endfor %}

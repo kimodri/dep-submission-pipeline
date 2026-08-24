@@ -1,6 +1,8 @@
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from analytics.fixtures import load_fixture_dashboard_datasets
 from dashboard.build import build_site
@@ -10,7 +12,11 @@ class DashboardBuildTests(unittest.TestCase):
     def test_builds_all_pages_assets_and_relative_links(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "site"
-            build_site(load_fixture_dashboard_datasets(), output)
+            build_site(
+                load_fixture_dashboard_datasets(),
+                output,
+                build_time=datetime(2026, 8, 25, 9, 30, tzinfo=ZoneInfo("Asia/Manila")),
+            )
 
             expected = (
                 output / "index.html",
@@ -34,6 +40,9 @@ class DashboardBuildTests(unittest.TestCase):
             self.assertIn('href="../assets/css/dashboard.css"', builders)
             self.assertIn('href="../index.html"', reviewers)
             self.assertIn("Builder Submission Dashboard", overview)
+            self.assertIn("Current milestone", overview)
+            self.assertIn(">M3<", overview)
+            self.assertIn("Week 10 of 24 · M3 spans weeks 7–12", overview)
             self.assertIn("Intervention Queue", builders)
             self.assertNotIn('<th scope="col">Owner</th>', builders)
             self.assertNotIn('<th scope="col">Next action</th>', builders)
