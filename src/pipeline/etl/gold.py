@@ -15,6 +15,16 @@ MILESTONE_DEADLINES = {
     6: date(2026, 12, 6),
 }
 
+MILESTONE_WEEKS = {
+    0: [1],
+    1: [*range(2, 5)],
+    2: [5, 6],
+    3: [*range(7, 13)],
+    4: [*range(13, 17)],
+    5: [*range(17, 21)],
+    6: [*range(21, 25)],
+}
+
 DIMENSION_CONFIG = {
     "dim_issue": {
         "natural_key": "issue_id",
