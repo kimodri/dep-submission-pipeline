@@ -43,7 +43,12 @@ def _environment() -> Environment:
     )
 
 
-def build_site(datasets: DashboardDatasets, output_dir: Path) -> None:
+def build_site(
+    datasets: DashboardDatasets,
+    output_dir: Path,
+    *,
+    build_time: datetime | None = None,
+) -> None:
     datasets = validate_dashboard_datasets(datasets)
     output_dir = Path(output_dir)
     if output_dir.exists():
@@ -56,7 +61,13 @@ def build_site(datasets: DashboardDatasets, output_dir: Path) -> None:
     vendor_dir.mkdir(parents=True)
     (vendor_dir / "plotly.min.js").write_text(get_plotlyjs(), encoding="utf-8")
 
-    generated_at = datetime.now(ZoneInfo("Asia/Manila")).strftime(
+    time_zone = ZoneInfo("Asia/Manila")
+    build_time = build_time or datetime.now(time_zone)
+    if build_time.tzinfo is None:
+        build_time = build_time.replace(tzinfo=time_zone)
+    else:
+        build_time = build_time.astimezone(time_zone)
+    generated_at = build_time.strftime(
         "%B %-d, %Y at %-I:%M %p PHT"
     )
     environment = _environment()
@@ -68,7 +79,7 @@ def build_site(datasets: DashboardDatasets, output_dir: Path) -> None:
             "asset_prefix": asset_prefix,
             "navigation": _navigation(asset_prefix),
             "generated_at": generated_at,
-            **context_builder(datasets),
+            **context_builder(datasets, as_of_date=build_time.date()),
         }
         rendered = environment.get_template(template_name).render(**context)
         output_path = output_dir / destination

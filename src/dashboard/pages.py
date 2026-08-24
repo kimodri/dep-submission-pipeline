@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 from markupsafe import Markup
 import pandas as pd
 import plotly.io as pio
@@ -8,6 +10,7 @@ from dashboard.charts import (
     build_reviewer_workload_chart,
     build_submission_status_chart,
 )
+from pipeline.etl.gold import MILESTONE_DEADLINES, MILESTONE_WEEKS
 
 
 PLOT_CONFIG = {"displayModeBar": False, "responsive": True, "scrollZoom": False}
@@ -51,9 +54,51 @@ def _schedule_kpis(schedule: pd.DataFrame) -> list[dict]:
     return cards
 
 
-def overview_context(datasets: DashboardDatasets) -> dict:
+def _current_milestone_kpi(as_of_date: date) -> dict:
+    ordered_deadlines = sorted(MILESTONE_DEADLINES.items())
+    current_number = next(
+        (
+            milestone_number
+            for milestone_number, deadline in ordered_deadlines
+            if as_of_date <= deadline
+        ),
+        ordered_deadlines[-1][0],
+    )
+
+    first_week = min(week for weeks in MILESTONE_WEEKS.values() for week in weeks)
+    last_week = max(week for weeks in MILESTONE_WEEKS.values() for week in weeks)
+    program_start = MILESTONE_DEADLINES[0] - timedelta(days=(first_week * 7) - 1)
+    current_week = ((as_of_date - program_start).days // 7) + 1
+    current_week = min(max(current_week, first_week), last_week)
+
+    milestone_weeks = MILESTONE_WEEKS[current_number]
+    week_label = (
+        f"week {milestone_weeks[0]}"
+        if len(milestone_weeks) == 1
+        else f"weeks {milestone_weeks[0]}–{milestone_weeks[-1]}"
+    )
     return {
-        "schedule_kpis": _schedule_kpis(datasets.builder_schedule),
+        "label": "Current milestone",
+        "value": f"M{current_number}",
+        "detail": (
+            f"Week {current_week} of {last_week} · "
+            f"M{current_number} spans {week_label}"
+        ),
+        "tone": "primary",
+    }
+
+
+def overview_context(
+    datasets: DashboardDatasets,
+    *,
+    as_of_date: date | None = None,
+) -> dict:
+    as_of_date = as_of_date or date.today()
+    return {
+        "schedule_kpis": [
+            _current_milestone_kpi(as_of_date),
+            *_schedule_kpis(datasets.builder_schedule),
+        ],
         "submission_chart": _chart_html(
             build_submission_status_chart(datasets.submission_status),
             "submission-status-chart",
@@ -64,7 +109,11 @@ def overview_context(datasets: DashboardDatasets) -> dict:
     }
 
 
-def builders_context(datasets: DashboardDatasets) -> dict:
+def builders_context(
+    datasets: DashboardDatasets,
+    *,
+    as_of_date: date | None = None,
+) -> dict:
     interventions = datasets.interventions.copy()
     records = interventions.to_dict(orient="records")
     return {
@@ -81,7 +130,11 @@ def builders_context(datasets: DashboardDatasets) -> dict:
     }
 
 
-def reviewers_context(datasets: DashboardDatasets) -> dict:
+def reviewers_context(
+    datasets: DashboardDatasets,
+    *,
+    as_of_date: date | None = None,
+) -> dict:
     workload = datasets.reviewer_workload
     unassigned = workload.loc[workload["reviewer"] == "Unassigned", "unresolved_count"]
     return {
