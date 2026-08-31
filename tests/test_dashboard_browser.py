@@ -115,3 +115,18 @@ class DashboardBrowserTests(unittest.TestCase):
         self.assertEqual(page.locator("[data-visible-count]").text_content(), "0")
         self.assertTrue(page.locator("[data-intervention-table]").is_hidden())
         context.close()
+
+    def test_builder_milestone_filter_combines_with_other_filters(self):
+        context = self.browser.new_context()
+        page = context.new_page()
+        page.goto(f"{self.base_url}/builders/index.html")
+        page.locator("[data-table-search]").fill("maria-reviewer")
+        page.locator("[data-table-milestone]").select_option("m3")
+        page.locator("[data-table-status]").select_option("passed")
+
+        self.assertEqual(page.locator("[data-visible-count]").text_content(), "1")
+        self.assertEqual(
+            page.locator("[data-intervention-row]:visible .builder-link").text_content(),
+            "isabel-ingest",
+        )
+        context.close()

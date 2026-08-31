@@ -30,6 +30,13 @@
       <input type="search" placeholder="Search builder or reviewer" data-table-search autocomplete="off">
     </label>
     <label class="select-control">
+      <span>Milestone</span>
+      <select data-table-milestone>
+        <option value="">All milestones</option>
+        {% for milestone in milestones %}<option value="{{ milestone|lower }}">{{ milestone }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="select-control">
       <span>Status</span>
       <select data-table-status>
         <option value="">All statuses</option>
@@ -64,6 +71,7 @@
         {% for item in interventions %}
         <tr data-intervention-row
             data-search="{{ item.builder|lower }} {{ item.reviewer|lower }}"
+            data-milestone="{{ item.current_milestone|lower }}"
             data-status="{{ item.status|lower }}"
             data-schedule="{{ item.schedule_status|lower }}">
           <td><a class="builder-link" href="{{ item.issue_url }}" target="_blank" rel="noopener noreferrer">{{ item.builder }}</a></td>

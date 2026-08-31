@@ -119,6 +119,11 @@ def builders_context(
     return {
         "interventions": records,
         "intervention_count": len(records),
+        "milestones": (
+            sorted(interventions["current_milestone"].unique())
+            if not interventions.empty
+            else []
+        ),
         "statuses": (
             sorted(interventions["status"].unique()) if not interventions.empty else []
         ),

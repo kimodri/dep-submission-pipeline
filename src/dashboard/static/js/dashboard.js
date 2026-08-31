@@ -133,6 +133,7 @@
     var table = document.querySelector("[data-intervention-table]");
     if (!table) return;
     var search = document.querySelector("[data-table-search]");
+    var milestone = document.querySelector("[data-table-milestone]");
     var status = document.querySelector("[data-table-status]");
     var schedule = document.querySelector("[data-table-schedule]");
     var rows = Array.from(table.querySelectorAll("[data-intervention-row]"));
@@ -142,11 +143,13 @@
     function normalize(value) { return String(value || "").trim().toLocaleLowerCase(); }
     function filterRows() {
       var query = normalize(search.value);
+      var selectedMilestone = normalize(milestone.value);
       var selectedStatus = normalize(status.value);
       var selectedSchedule = normalize(schedule.value);
       var visible = 0;
       rows.forEach(function (row) {
         var matches = (!query || normalize(row.dataset.search).includes(query)) &&
+          (!selectedMilestone || normalize(row.dataset.milestone) === selectedMilestone) &&
           (!selectedStatus || normalize(row.dataset.status) === selectedStatus) &&
           (!selectedSchedule || normalize(row.dataset.schedule) === selectedSchedule);
         row.hidden = !matches;
@@ -158,6 +161,7 @@
     }
 
     search.addEventListener("input", filterRows);
+    milestone.addEventListener("change", filterRows);
     status.addEventListener("change", filterRows);
     schedule.addEventListener("change", filterRows);
   }
