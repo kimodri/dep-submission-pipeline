@@ -15,7 +15,8 @@ NAMES_TO_DROP = [
     "gkate78", 
     "Zeraphim", 
     "cancinoray", 
-    "CardinalSeen"
+    "CardinalSeen",
+    "yuichiotsuka"
 ]
 
 def _get_reviewers(reviewer_list: list[dict]) -> list[str]:
