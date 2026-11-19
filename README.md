@@ -1,126 +1,208 @@
+<p align="center">
+  <img src="images/dep-logo.png" alt="Data Engineering Pilipinas logo" width="20%">
+</p>
+
 # DEP Open Track Submission Pipeline
-### Background
-This year the Data Engineering Pilipinas has held its Open Track Program where they have accepted 50 builders to learn the basics of data engineering. 
 
-The tracking of the builders, however, poses a challenge where it is difficult to see where milestones a builder is in or how they are doing which inspires this data pipeline.
+A data pipeline and dimensional warehouse for tracking builder submissions in the Data Engineering Pilipinas (DEP) Open Track program.
 
----
-### Data Model/Architecture
-This pipeline follows the medallion architecture with:
-- **Bronze**: raw data
-- **Silver**: cleaned and validated data
-- **Gold**: Modeled data
+I built this project to turn GitHub Projects data into a useful view of builder progress and reviewer workload. It brings together API ingestion, layered transformations, Kimball-style dimensional modeling, SQL analytics, and a static dashboard.
 
-```mermaid
-flowchart LR
-    subgraph bronze["Bronze"]
-        raw["bronze.raw_issue_extractions"]
-    end
+## Background and Data Engineering Pilipinas
 
-    subgraph silver["Silver"]
-        submissions["silver.issue_submissions"]
-    end
+This project connects my data engineering work with the Data Engineering Pilipinas community and its Open Track program. Builders submit milestone work through GitHub, creating a practical challenge: understanding who is progressing, which submissions need attention, and where review work is accumulating.
 
-    subgraph gold["Gold"]
-        fact["gold.fact_submission_snapshot"]
-        issue["gold.dim_issue"]
-        reviewer["gold.dim_reviewer"]
-        state["gold.dim_state"]
-        status["gold.dim_status"]
-        milestone["gold.dim_milestone"]
-        date["gold.dim_date"]
-        bridge["gold.bridge_submission_reviewer"]
+The pipeline captures submissions over time and organizes them into a warehouse designed for reporting. Its goal is to help program tracking move from inspecting individual issues to answering questions across builders, milestones, and reviewers.
 
-        issue --> fact
-        state --> fact
-        status --> fact
-        milestone --> fact
-        date --> fact
-        fact --> bridge
-        reviewer --> bridge
-    end
+## Dashboard and Business Questions
 
-    raw --> submissions --> fact
+The dashboard provides overview, builder, and reviewer pages, built from SQL queries against Gold. It answers:
+
+- How are submissions distributed across milestones and statuses?
+- How many observed builders are on track or delayed?
+- How does milestone completion change over time?
+- Which builders need attention, and who should act next?
+- How much unresolved work is assigned to each reviewer?
+
+To explore the dashboard without GitHub or MotherDuck credentials, use the [fixture preview instructions](#preview-the-dashboard-without-credentials).
+
+## End-to-End Architecture
+
+![End-to-end architecture: GitHub Actions runs a Python pipeline that loads GitHub Projects data into Bronze, Silver, and Gold in MotherDuck; Gold feeds SQL analytics, a Plotly and Jinja2 dashboard, and GitHub Pages.](images/end-to-end-architecture.png)
+
+| Component | Technology and purpose |
+| --- | --- |
+| Extraction and transformation | Python, Requests, and pandas |
+| Warehouse | DuckDB locally; MotherDuck for the production pipeline |
+| Orchestration | GitHub Actions, with scheduled and manual execution |
+| Analytics | SQL queries over the Gold schema |
+| Presentation | Plotly charts and Jinja2 templates rendered as a static site |
+| Publishing | GitHub Pages deployment workflow |
+| Dependency management | uv and a committed lockfile |
+
+The pipeline workflow is configured to run daily at **08:11 Asia/Manila (00:11 UTC)**. The dashboard workflow builds from Gold on pushes to `main`, successful pipeline workflow completion, or manual dispatch.
+
+## Gold Layer: Dimensional Warehouse Design
+
+Gold is the analytical core of this project. I organized the model around the business process of tracking milestone submissions, defined the grain, and then selected the dimensions and measures needed to analyze it.
+
+![Gold layer dimensional model](images/gold-layer.png)
+
+The image provides a model overview. Some labels differ from the current implementation; the table names and relationships below follow the [warehouse DDL](src/pipeline/etl/load.py).
+
+### Business Process and Grain
+
+> One row in `gold.fact_submission_snapshot` represents the state of one submission as observed during one pipeline extraction.
+
+The table follows a periodic snapshot approach: repeated extractions preserve observations of submissions across time. Its uniqueness constraint is `UNIQUE(issue_key, extracted_at)`, and `run_id` traces each observation back to its pipeline run.
+
+This grain supports both the latest view of the program and comparisons across extractions. A submission observed on several dates contributes several historical snapshots, so counting all fact rows would not produce a current submission count.
+
+### Facts, Dimensions, and Relationships
+
+| Table | Analytical purpose |
+| --- | --- |
+| `gold.fact_submission_snapshot` | Stores dimension references, source timestamps, assignment flag, days since update, and submission age for each observation |
+| `gold.dim_issue` | Identifies the submission and holds its title, URL, and author |
+| `gold.dim_state` | Describes the GitHub issue state |
+| `gold.dim_status` | Describes the submission's review status; a snapshot may have no status |
+| `gold.dim_milestone` | Holds milestone numbers and configured deadlines, including milestones with no submissions |
+| `gold.dim_date` | Provides calendar attributes for grouping by creation, update, and extraction dates |
+| `gold.dim_reviewer` | Identifies reviewers independently of submissions |
+| `gold.bridge_submission_reviewer` | Associates snapshots with reviewers through a composite primary key |
+
+### Modeling Decisions
+
+- **Persistent surrogate keys:** the loader resolves natural keys to database-managed dimension keys, keeping references consistent across runs.
+- **Role-playing date dimension:** creation, update, and extraction dates reference the same calendar dimension through three separate keys. Original timestamps are retained for finer analysis.
+- **Reviewer bridge:** a submission can have multiple reviewers. A bridge preserves those assignments while keeping one fact row per submission observation.
+- **Snapshot measures:** submission age and days since update describe the observation at extraction time. They should not be summed across snapshots to represent elapsed time.
+- **Historical workflow state:** state, status, milestone, and reviewer relationships are recorded for each snapshot, allowing progress to be compared across observations.
+
+Issue attributes are updated in place when reloaded, following a Type 1 approach. The model preserves submission observations, but does not preserve every historical version of an issue's title or author.
+
+## Bronze and Silver: Preparing Trustworthy Data
+
+### Bronze: Preserve the Source
+
+`bronze.raw_issue_extractions` stores the extracted JSON payload, extraction timestamp, run ID, and attempt number. Retaining the payload allows downstream transformations to be rerun without requesting the same observation from GitHub again.
+
+`ops.pipeline_attempts` records attempt outcomes and failure information. Pending Silver processing selects the latest successful Bronze attempt for each run.
+
+### Silver: Shape the Analytical Input
+
+`silver.issue_submissions` turns nested API responses into tabular submissions. The transformation:
+
+- Extracts reviewers, milestone labels, and project status fields.
+- Applies milestone-title and author-exclusion rules for the program's reporting scope.
+- Retains the newest-created submission per author and milestone within an extraction.
+- Converts timestamps to Asia/Manila and derives assignment, submission-age, and days-since-update fields.
+
+The Silver primary key is `(run_id, issue_id)`. These rules define which source issues reach the warehouse and therefore influence every dashboard metric.
+
+## Pipeline Execution and Reliability
+
+The production entry point runs extraction, Bronze persistence, Silver transformation and loading, and Gold transformation and loading.
+
+- **Paginated extraction:** follows GitHub GraphQL cursors and rejects invalid pagination responses.
+- **Bounded retries:** handles transient connection errors, rate limits, and selected server responses with capped delays.
+- **Attempt tracking:** identifies runs and attempts, records failures by stage, and skips Bronze attempts that already have a final outcome.
+- **Transactional loads:** Bronze payload and success metadata are committed together; Gold dimensions, facts, bridge rows, and load tracking are committed together.
+- **Repeat-load protection:** `ops.gold_loads` tracks completed Gold runs so loading the same run again does not append another set of facts.
+- **Recovery commands:** separate Silver and Gold commands process pending stored data after downstream failures.
+
+The implementation lives in [`src/pipeline`](src/pipeline).
+
+## Analytics Built on Gold
+
+The [analytics queries](src/analytics/queries) translate the warehouse into dashboard datasets with explicit counting rules:
+
+| Analysis | Current rule |
+| --- | --- |
+| Submission distribution | Counts submissions by milestone and non-null status at the latest extraction |
+| Builder schedule | Compares each observed author's highest submitted milestone with the expected milestone; within one milestone is classified as on track |
+| Progress over time | Averages each observed builder's distinct passed milestones divided by the number of milestones in the dimension, per extraction |
+| Builder interventions | Selects one current submission per builder, prioritizing the highest milestone, and assigns a next actor and action |
+| Reviewer workload | Counts distinct open, non-passed current builder submissions per reviewer, including an unassigned group |
+
+Builder counts cover authors represented in the submissions, rather than the entire enrolled cohort. Schedule status measures submission progress; it does not mean every earlier milestone has passed review. A submission assigned to multiple reviewers counts toward each reviewer's workload, so reviewer totals are not additive across reviewers.
+
+## Running the Project
+
+### Install Dependencies
+
+Use uv to install the locked dependencies. The repository's `.python-version` selects Python 3.13.
+
+```sh
+uv sync --locked
 ```
 
-**Bronze** contains the raw extractions and the metadata needed to be true to the source and allow reruns:
+### Configure the Pipeline
 
-```mermaid
-flowchart TB
-    subgraph raw["bronze.raw_issue_extractions"]
-        direction TB
-        key["Composite primary key<br/><b>run_id</b>: VARCHAR<br/><b>attempt_number</b>: INTEGER"]
-        metadata["Extraction metadata<br/><b>extracted_at</b>: TIMESTAMPTZ"]
-        payload["Source data<br/><b>payload</b>: JSON"]
-        key --- metadata --- payload
-    end
+Create a local `.env` file with the configuration needed for your chosen mode:
+
+```dotenv
+TOKEN=your_github_token
+OWNER_NAME=your_project_owner
+OWNER_TYPE=organization
+PROJECT_NUMBER=1
+MOTHERDUCK_TOKEN=your_motherduck_token
+MOTHERDUCKDB_PATH=md:your_database
 ```
 
-**Silver** contains the cleaned, validated, and derived data needed for analysis:
+Use `organization` or `user` for `OWNER_TYPE`. The GitHub token needs access to the source project. `PROJECT_NUMBER` is its project number, and the MotherDuck path must begin with `md:`.
 
-```mermaid
-flowchart TB
-    subgraph silver["silver.issue_submissions"]
-        direction TB
-        identity["Composite primary key<br/><b>run_id</b>: VARCHAR<br/><b>issue_id</b>: VARCHAR"]
-        source["Issue attributes<br/><b>issue_title</b>: VARCHAR<br/><b>issue_url</b>: VARCHAR<br/><b>issue_author</b>: VARCHAR (nullable)"]
-        workflow["Workflow state<br/><b>state</b>: VARCHAR<br/><b>reviewer</b>: VARCHAR[]<br/><b>milestone</b>: VARCHAR<br/><b>status</b>: VARCHAR (nullable)<br/><b>is_assigned</b>: BOOLEAN"]
-        timing["Timestamps and derived metrics<br/><b>created_at</b>: TIMESTAMPTZ<br/><b>updated_at</b>: TIMESTAMPTZ<br/><b>extracted_at</b>: TIMESTAMPTZ<br/><b>days_since_update</b>: BIGINT<br/><b>submission_age_days</b>: BIGINT"]
-        identity --- source --- workflow --- timing
-    end
+For GitHub Actions, configure secrets `DEP_GITHUB_TOKEN` and `MOTHERDUCK_TOKEN`, and repository variables `OWNER_NAME`, `OWNER_TYPE`, `PROJECT_NUMBER`, and `MOTHERDUCKDB_PATH`. The workflow maps `DEP_GITHUB_TOKEN` to the application's `TOKEN` variable.
+
+### Run and Recover the Pipeline
+
+```sh
+# GitHub -> Bronze -> Silver -> Gold in MotherDuck
+uv run dep-pipeline-prod
+
+# GitHub -> Bronze -> Silver -> Gold in local DuckDB
+uv run dep-pipeline-dev
+
+# Process stored Bronze runs that are pending in Silver
+uv run dep-pipeline-silver-manual
+
+# Process stored Silver runs that are pending in Gold
+uv run dep-pipeline-gold-manual
 ```
 
+Local DuckDB defaults to `data/warehouse.duckdb`; override it with `DUCKDB_PATH`. The manual recovery commands use MotherDuck.
 
-**Gold** contains a modeled schema for easier query. In addition this Gold architecture follows the **Kimball Model**.
+`uv run dep-pipeline-dev --local` loads a local payload into Bronze only. Supply an extraction payload containing a `pages` list at `data/rawpayload.json`, or set `SAMPLE_DATA_PATH`; local data files are excluded from version control.
 
+### Preview the Dashboard Without Credentials
 
-- **Grain**
-In Kimball architecture, after business alignment with the project's goals, the developer should go right into definition of the grain and that is what a row in a table represents.
-
-For this project:
-> One row represents the state of one submission as observed during one pipeline extraction.
-
-Given the grain the uniqueness rule should be:
-
-- `UNIQUE(issue_key, extracted_at)`
-- The fact table also falls under the `periodic snapshot fact table`
-
-Only after this definition, the developer should go after `dimensions` and `measurements/facts`:
-
-```mermaid
-flowchart TB
-    issue["<b>gold.dim_issue</b><br/>PK issue_key: BIGINT<br/>UK issue_id: VARCHAR<br/>issue_title: VARCHAR<br/>issue_url: VARCHAR<br/>issue_author: VARCHAR (nullable)"]
-    state["<b>gold.dim_state</b><br/>PK state_key: BIGINT<br/>UK state: VARCHAR"]
-    status["<b>gold.dim_status</b><br/>PK status_key: BIGINT<br/>UK status: VARCHAR"]
-    milestone["<b>gold.dim_milestone</b><br/>PK milestone_key: BIGINT<br/>UK milestone: VARCHAR<br/>milestone_number: INTEGER (nullable)<br/>deadline_date: DATE (nullable)"]
-    date["<b>gold.dim_date</b><br/>PK date_key: BIGINT<br/>UK date: DATE<br/>year: INTEGER<br/>month: INTEGER<br/>month_name: VARCHAR<br/>day: INTEGER<br/>day_name: VARCHAR"]
-    reviewer["<b>gold.dim_reviewer</b><br/>PK reviewer_key: BIGINT<br/>UK reviewer: VARCHAR"]
-
-    fact["<b>gold.fact_submission_snapshot</b><br/>PK submission_snapshot_key: BIGINT<br/>run_id: VARCHAR<br/>FK issue_key: BIGINT<br/>FK state_key: BIGINT<br/>FK status_key: BIGINT (nullable)<br/>FK milestone_key: BIGINT<br/>FK created_at_key: BIGINT<br/>FK updated_at_key: BIGINT<br/>FK extracted_at_key: BIGINT<br/>created_at: TIMESTAMPTZ<br/>updated_at: TIMESTAMPTZ<br/>extracted_at: TIMESTAMPTZ<br/>is_assigned: BOOLEAN<br/>days_since_update: BIGINT<br/>submission_age_days: BIGINT<br/>UNIQUE issue_key + extracted_at"]
-
-    bridge["<b>gold.bridge_submission_reviewer</b><br/>PK/FK submission_snapshot_key: BIGINT<br/>PK/FK reviewer_key: BIGINT"]
-
-    issue -->|"1 to many"| fact
-    state -->|"1 to many"| fact
-    status -.->|"0..1 status per snapshot"| fact
-    milestone -->|"1 to many"| fact
-    date -->|"1 to many via created / updated / extracted dates"| fact
-    fact -->|"1 to many"| bridge
-    reviewer -->|"1 to many"| bridge
+```sh
+uv run dep-dashboard-build --source fixtures --output site
+uv run python -m http.server 8000 --directory site
 ```
 
----
-### Analysis
-I am interested in answering the following questions which will be translated to visualizations:
+Open `http://localhost:8000`. This preview uses fixture data rather than actual program results.
 
-1. How are submissions distributed across milestones and statuses?
-   - A stacked bar chart with milestones on the x-axis, submission count on the y-axis, and submission status as the stacks.
-2. How many builders are on track or delayed?
-   - KPI cards showing the count and percentage of unique builders in each group.
-3. How does builder progress change over time?
-   - A line chart with extraction date on the x-axis and average milestone completion rate on the y-axis.
-   - A churn-risk metric can later represent builders with no milestone progress or submission activity for an agreed period.
-4. Which builders need intervention?
-   - A table showing each builder's current milestone, status, reviewer, issue state, submission age, and next action.
-5. How much unresolved work does each reviewer have?
-   - A horizontal bar chart showing the number of unresolved submissions assigned to each reviewer.
+To build from the MotherDuck Gold layer instead:
+
+```sh
+uv run dep-dashboard-build --source gold --output site
+```
+
+## Testing and Validation
+
+The test suite covers extraction and retries, run metadata, Bronze lifecycle, Silver transformations, Gold modeling and loading, analytics queries, dataset validation, and dashboard generation.
+
+```sh
+uv run python -m unittest discover -s tests
+```
+
+Browser checks are opt-in. Install Chromium with `uv run playwright install chromium`, set `RUN_BROWSER_TESTS=1` in your shell, then run the suite to include them.
+
+## Design Tradeoffs and Next Steps
+
+- **Observation-based history:** snapshots capture extraction-time state. Changes between extractions are not available as individual events.
+- **Program-specific rules:** milestone deadlines, author exclusions, and submission selection are encoded in Python. Moving them to maintained configuration would make the project easier to reuse.
+- **Cohort coverage:** adding a builder roster would allow reporting on enrolled builders who have not submitted anything.
+- **Activity interpretation:** GitHub's `updated_at` can reflect any issue update. A future inactivity metric needs more specific activity data to distinguish builder and reviewer actions.
+- **Dimension history:** Type 2 dimensions could preserve changing descriptive attributes if historical reporting requires them.
