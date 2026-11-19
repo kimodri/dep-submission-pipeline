@@ -42,6 +42,8 @@ To explore the dashboard without GitHub or MotherDuck credentials, use the [fixt
 
 The pipeline workflow is configured to run daily at **08:11 Asia/Manila (00:11 UTC)**. The dashboard workflow builds from Gold on pushes to `main`, successful pipeline workflow completion, or manual dispatch.
 
+*note that the time when this pipeline runs is configurable.
+
 ## Gold Layer: Dimensional Warehouse Design
 
 Gold is the analytical core of this project. I organized the model around the business process of tracking milestone submissions, defined the grain, and then selected the dimensions and measures needed to analyze it.
